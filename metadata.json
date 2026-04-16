@@ -1,0 +1,5 @@
+{
+  "name": "BOSCH eCall Platform",
+  "description": "Emergency response dashboard for connected vehicles.",
+  "requestFramePermissions": []
+}
