@@ -22,6 +22,7 @@ import {
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useLanguage, Language } from '../contexts/LanguageContext';
+import BoschLogo from './BoschLogo';
 import SettingsModal from './SettingsModal';
 
 const AegisAssistant = lazy(() => import('./AegisAssistant'));
@@ -165,12 +166,8 @@ export default function Layout() {
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <aside className="w-64 bg-white dark:bg-slate-950 text-slate-600 dark:text-slate-300 flex flex-col border-r border-slate-200 dark:border-slate-800 z-10">
-          <div className="p-6 flex items-center gap-3 text-slate-900 dark:text-white font-bold text-2xl border-b border-slate-200 dark:border-slate-800">
-            <svg viewBox="0 0 100 100" className="w-8 h-8 flex-shrink-0 text-[#E20015]" fill="currentColor">
-              <path d="M 50 5 A 45 45 0 1 0 50 95 A 45 45 0 1 0 50 5 Z M 50 13 A 37 37 0 1 1 50 87 A 37 37 0 1 1 50 13 Z" />
-              <path d="M 30 25 A 32 32 0 0 0 30 75 L 38 75 L 38 54 L 62 54 L 62 75 L 70 75 A 32 32 0 0 0 70 25 L 62 25 L 62 46 L 38 46 L 38 25 Z" />
-            </svg>
-            <span className="tracking-wide">BOSCH</span>
+          <div className="border-b border-slate-200 p-6 dark:border-slate-800">
+            <BoschLogo iconClassName="h-9 w-9" textClassName="text-[1.9rem]" />
           </div>
           <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
             {navItems.map((item) => (

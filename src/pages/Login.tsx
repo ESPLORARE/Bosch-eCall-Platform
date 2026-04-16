@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { RadioTower, Lock, User } from 'lucide-react';
+import BoschLogo from '../components/BoschLogo';
 
 interface LoginProps {
   onLogin: () => void;
@@ -21,11 +22,8 @@ export default function Login({ onLogin }: LoginProps) {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-800 overflow-hidden">
         <div className="bg-slate-900 dark:bg-slate-950 p-8 text-center border-b border-slate-800">
-          <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <svg viewBox="0 0 100 100" className="w-10 h-10 text-slate-900" fill="currentColor">
-              <path d="M 50 5 A 45 45 0 1 0 50 95 A 45 45 0 1 0 50 5 Z M 50 13 A 37 37 0 1 1 50 87 A 37 37 0 1 1 50 13 Z" />
-              <path d="M 30 25 A 32 32 0 0 0 30 75 L 38 75 L 38 54 L 62 54 L 62 75 L 70 75 A 32 32 0 0 0 70 25 L 62 25 L 62 46 L 38 46 L 38 25 Z" />
-            </svg>
+          <div className="mx-auto mb-4 inline-flex rounded-2xl bg-white px-5 py-4 shadow-lg">
+            <BoschLogo iconClassName="h-11 w-11" textClassName="text-[2.2rem]" />
           </div>
           <h1 className="text-2xl font-bold text-white">BOSCH eCall Platform</h1>
           <p className="text-slate-400 mt-2 text-sm">Emergency Response Dashboard</p>
