@@ -1,6 +1,14 @@
+import dotenv from 'dotenv';
 import express from 'express';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+
+for (const envFile of ['.env.local', '.env']) {
+  if (fs.existsSync(envFile)) {
+    dotenv.config({ path: envFile, override: false });
+  }
+}
 
 // --- Mock Data ---
 

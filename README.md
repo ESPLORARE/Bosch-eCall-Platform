@@ -15,9 +15,14 @@ View your app in AI Studio: https://ai.studio/apps/f017d928-a66a-4af2-b3f3-18f19
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. If you need server-side secrets, create `.env.local` from `.env.example`
+3. Keep API keys server-side only. Do not use `VITE_` for secrets and do not inject them into the frontend bundle.
+4. Run the app:
    `npm run dev`
+
+Secrets policy:
+`GEMINI_API_KEY` and similar values belong in `.env.local` or your deployment secret manager only.
+`VITE_*` variables are public and will be visible in the browser.
 
 ## GitHub Pages
 
