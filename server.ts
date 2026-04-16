@@ -1,8 +1,11 @@
 import dotenv from 'dotenv';
+import { GoogleGenAI } from '@google/genai';
 import express from 'express';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import { generateAssistantFallback } from './src/services/assistantMock';
+import type { Hospital, Incident, Operator, Vehicle, Weather } from './src/types';
 
 for (const envFile of ['.env.local', '.env']) {
   if (fs.existsSync(envFile)) {
@@ -12,7 +15,7 @@ for (const envFile of ['.env.local', '.env']) {
 
 // --- Mock Data ---
 
-let incidents = [
+let incidents: Incident[] = [
   {
     incidentId: 'INC-2026-001',
     timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
@@ -129,7 +132,7 @@ let incidents = [
   }
 ];
 
-const vehicles = [
+const vehicles: Vehicle[] = [
   {
     vehicleId: 'VEH-9921',
     plateNumber: 'VAA 8899',
@@ -222,7 +225,7 @@ const vehicles = [
   }
 ];
 
-const hospitals = [
+const hospitals: Hospital[] = [
   { id: 'H-01', name: 'Kuala Lumpur Hospital (HKL)', latitude: 3.1717, longitude: 101.7014, phone: '+60 3-2615 5555' },
   { id: 'H-02', name: 'Gleneagles Kuala Lumpur', latitude: 3.1600, longitude: 101.7370, phone: '+60 3-4141 3000' },
   { id: 'H-03', name: 'Pantai Hospital Kuala Lumpur', latitude: 3.1196, longitude: 101.6664, phone: '+60 3-2296 0888' },
@@ -252,7 +255,7 @@ const hospitals = [
   { id: 'H-27', name: 'Hospital Raja Perempuan Zainab II (Kota Bharu)', latitude: 6.1248, longitude: 102.2457, phone: '+60 9-745 2000' }
 ];
 
-const weather = {
+const weather: Weather = {
   location: 'Kuala Lumpur, Malaysia',
   temperature: 32,
   condition: 'Scattered Thunderstorms',
@@ -261,7 +264,7 @@ const weather = {
   icon: 'cloud-lightning'
 };
 
-let operators = [
+let operators: Operator[] = [
   { 
     id: 'OP-001', 
     name: 'Jane Doe', 
@@ -488,6 +491,78 @@ async function startServer() {
       severityDistribution,
       triggerDistribution
     });
+  });
+
+  app.post('/api/assistant-chat', async (req, res) => {
+    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+
+    if (!message) {
+      res.status(400).json({ error: 'Message is required' });
+      return;
+    }
+
+    const fallbackReply = await generateAssistantFallback(message, {
+      incidents,
+      operators,
+      hospitals,
+    });
+
+    if (!process.env.GEMINI_API_KEY) {
+      res.json({ reply: fallbackReply, source: 'mock' });
+      return;
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const incidentSnapshot = incidents
+        .slice(0, 8)
+        .map((incident) => ({
+          incidentId: incident.incidentId,
+          severity: incident.severity,
+          status: incident.status,
+          triggerType: incident.triggerType,
+          plateNumber: incident.plateNumber,
+          address: incident.address,
+          timestamp: incident.timestamp,
+          passengerCondition: incident.passengerCondition,
+          notes: incident.notes,
+          aiRecommendations: incident.aiRecommendations,
+        }));
+      const operatorSnapshot = operators.map((operator) => ({
+        id: operator.id,
+        name: operator.name,
+        role: operator.role,
+        status: operator.status,
+        activeIncidents: operator.activeIncidents,
+        assignedRegion: operator.assignedRegion,
+      }));
+      const hospitalSnapshot = hospitals.slice(0, 8);
+
+      const prompt = [
+        'You are Aegis AI, an operational copilot for a Bosch eCall emergency response dashboard.',
+        'Answer using only the provided operational context when possible.',
+        'Be concise, practical, and safety-oriented.',
+        'If the answer is uncertain, say so and avoid inventing facts.',
+        '',
+        `User question: ${message}`,
+        '',
+        `Incidents: ${JSON.stringify(incidentSnapshot)}`,
+        `Operators: ${JSON.stringify(operatorSnapshot)}`,
+        `Hospitals: ${JSON.stringify(hospitalSnapshot)}`,
+        '',
+        `Fallback guidance: ${fallbackReply}`,
+      ].join('\n');
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+      });
+
+      res.json({ reply: response.text || fallbackReply, source: 'gemini' });
+    } catch (error) {
+      console.error('Assistant AI request failed:', error);
+      res.json({ reply: fallbackReply, source: 'mock' });
+    }
   });
 
   // --- Vite Middleware ---

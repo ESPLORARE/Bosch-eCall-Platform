@@ -1,5 +1,6 @@
 import { Incident, Vehicle, AnalyticsData, Hospital, Weather, Operator } from '../types';
 import { mockPlatformApi } from '../data/mockPlatformData';
+import { generateAssistantFallback } from './assistantMock';
 
 const useMockApi =
   import.meta.env.VITE_USE_MOCK_API === 'true' ||
@@ -88,5 +89,35 @@ export const api = {
   },
   getAnalytics: async (): Promise<AnalyticsData> => {
     return requestJson('/api/analytics', () => mockPlatformApi.getAnalytics());
+  },
+  askAssistant: async (message: string): Promise<string> => {
+    const fallback = async () =>
+      generateAssistantFallback(message, {
+        incidents: await mockPlatformApi.getIncidents(),
+        operators: await mockPlatformApi.getOperators(),
+        hospitals: await mockPlatformApi.getHospitals(),
+      });
+
+    if (useMockApi) {
+      return fallback();
+    }
+
+    try {
+      const res = await fetch('/api/assistant-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
+      }
+
+      const data = (await res.json()) as { reply: string };
+      return data.reply;
+    } catch (error) {
+      console.warn('Falling back to mock assistant response', error);
+      return fallback();
+    }
   }
 };
