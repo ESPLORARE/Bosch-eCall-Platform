@@ -137,18 +137,19 @@ export default function Layout() {
 
   useEffect(() => {
     const loadAssistant = () => setShouldLoadAssistant(true);
+    const browserWindow = window;
 
-    if (typeof window === 'undefined') {
+    if (typeof browserWindow === 'undefined') {
       return;
     }
 
-    if ('requestIdleCallback' in window) {
-      const idleId = window.requestIdleCallback(loadAssistant, { timeout: 2000 });
-      return () => window.cancelIdleCallback(idleId);
+    if ('requestIdleCallback' in browserWindow) {
+      const idleId = browserWindow.requestIdleCallback(loadAssistant, { timeout: 2000 });
+      return () => browserWindow.cancelIdleCallback(idleId);
     }
 
-    const timeoutId = window.setTimeout(loadAssistant, 1200);
-    return () => window.clearTimeout(timeoutId);
+    const timeoutId = globalThis.setTimeout(loadAssistant, 1200);
+    return () => globalThis.clearTimeout(timeoutId);
   }, []);
 
   return (

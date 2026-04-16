@@ -1,68 +1,92 @@
 import { Incident, Vehicle, AnalyticsData, Hospital, Weather, Operator } from '../types';
+import { mockPlatformApi } from '../data/mockPlatformData';
+
+const useMockApi =
+  import.meta.env.VITE_USE_MOCK_API === 'true' ||
+  (typeof window !== 'undefined' && window.location.hostname.endsWith('github.io'));
+
+async function requestJson<T>(path: string, fallback: () => Promise<T>, init?: RequestInit): Promise<T> {
+  if (useMockApi) {
+    return fallback();
+  }
+
+  try {
+    const res = await fetch(path, init);
+    if (!res.ok) {
+      throw new Error(`Request failed: ${res.status}`);
+    }
+    return (await res.json()) as T;
+  } catch (error) {
+    console.warn(`Falling back to mock API for ${path}`, error);
+    return fallback();
+  }
+}
 
 export const api = {
   getIncidents: async (): Promise<Incident[]> => {
-    const res = await fetch('/api/incidents');
-    return res.json();
+    return requestJson('/api/incidents', () => mockPlatformApi.getIncidents());
   },
   getIncident: async (id: string): Promise<Incident> => {
-    const res = await fetch(`/api/incidents/${id}`);
-    if (!res.ok) throw new Error('Incident not found');
-    return res.json();
+    return requestJson(`/api/incidents/${id}`, () => mockPlatformApi.getIncident(id));
   },
   createIncident: async (data: Partial<Incident>): Promise<Incident> => {
-    const res = await fetch('/api/incidents', {
+    return requestJson('/api/incidents', () => mockPlatformApi.createIncident(data), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    return res.json();
   },
   updateIncidentStatus: async (id: string, status: string, operator: string, note?: string): Promise<Incident> => {
-    const res = await fetch(`/api/incidents/${id}/status`, {
+    return requestJson(
+      `/api/incidents/${id}/status`,
+      () => mockPlatformApi.updateIncidentStatus(id, status, operator, note),
+      {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, operator, note }),
-    });
-    return res.json();
+      },
+    );
   },
   getVehicles: async (): Promise<Vehicle[]> => {
-    const res = await fetch('/api/vehicles');
-    return res.json();
+    return requestJson('/api/vehicles', () => mockPlatformApi.getVehicles());
   },
   getHospitals: async (): Promise<Hospital[]> => {
-    const res = await fetch('/api/hospitals');
-    return res.json();
+    return requestJson('/api/hospitals', () => mockPlatformApi.getHospitals());
   },
   getWeather: async (): Promise<Weather> => {
-    const res = await fetch('/api/weather');
-    return res.json();
+    return requestJson('/api/weather', () => mockPlatformApi.getWeather());
   },
   getOperators: async (): Promise<Operator[]> => {
-    const res = await fetch('/api/operators');
-    return res.json();
+    return requestJson('/api/operators', () => mockPlatformApi.getOperators());
   },
   createOperator: async (data: Partial<Operator>): Promise<Operator> => {
-    const res = await fetch('/api/operators', {
+    return requestJson('/api/operators', () => mockPlatformApi.createOperator(data), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    return res.json();
   },
   updateOperator: async (id: string, data: Partial<Operator>): Promise<Operator> => {
-    const res = await fetch(`/api/operators/${id}`, {
+    return requestJson(`/api/operators/${id}`, () => mockPlatformApi.updateOperator(id, data), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    return res.json();
   },
   deleteOperator: async (id: string): Promise<void> => {
-    await fetch(`/api/operators/${id}`, { method: 'DELETE' });
+    if (useMockApi) {
+      await mockPlatformApi.deleteOperator(id);
+      return;
+    }
+
+    try {
+      await fetch(`/api/operators/${id}`, { method: 'DELETE' });
+    } catch (error) {
+      console.warn(`Falling back to mock API for /api/operators/${id}`, error);
+      await mockPlatformApi.deleteOperator(id);
+    }
   },
   getAnalytics: async (): Promise<AnalyticsData> => {
-    const res = await fetch('/api/analytics');
-    return res.json();
+    return requestJson('/api/analytics', () => mockPlatformApi.getAnalytics());
   }
 };
