@@ -166,8 +166,8 @@ export default function Layout() {
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <aside className="w-64 bg-white dark:bg-slate-950 text-slate-600 dark:text-slate-300 flex flex-col border-r border-slate-200 dark:border-slate-800 z-10">
-          <div className="border-b border-slate-200 p-6 dark:border-slate-800">
-            <BoschLogo iconClassName="h-9 w-9" textClassName="text-[1.9rem]" />
+          <div className="border-b border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-white">
+            <BoschLogo imageClassName="h-9 w-auto" />
           </div>
           <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
             {navItems.map((item) => (

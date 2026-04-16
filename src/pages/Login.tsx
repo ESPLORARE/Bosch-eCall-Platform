@@ -23,7 +23,7 @@ export default function Login({ onLogin }: LoginProps) {
       <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-800 overflow-hidden">
         <div className="bg-slate-900 dark:bg-slate-950 p-8 text-center border-b border-slate-800">
           <div className="mx-auto mb-4 inline-flex rounded-2xl bg-white px-5 py-4 shadow-lg">
-            <BoschLogo iconClassName="h-11 w-11" textClassName="text-[2.2rem]" />
+            <BoschLogo imageClassName="h-11 w-auto" />
           </div>
           <h1 className="text-2xl font-bold text-white">BOSCH eCall Platform</h1>
           <p className="text-slate-400 mt-2 text-sm">Emergency Response Dashboard</p>
