@@ -1,40 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { Incident, Hospital, SOP } from '../types';
 import { format } from 'date-fns';
 import { ArrowLeft, Clock, MapPin, Car, User, FileText, Activity, Send, AlertCircle, History, Stethoscope, Sparkles, ChevronRight } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
 import { mockSOPs } from '../data/mockSOPs';
-import { Incident3DView } from '../components/Incident3DView';
 
-// Fix for default marker icons in react-leaflet
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
-
-// Custom icons
-const createIncidentIcon = (severity: string) => {
-  const color = severity === 'high' ? '#ef4444' : severity === 'medium' ? '#f97316' : '#eab308';
-  return L.divIcon({
-    className: 'custom-incident-marker',
-    html: `<div style="background-color: ${color}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
-    iconSize: [20, 20],
-    iconAnchor: [10, 10],
-  });
-};
-
-const hospitalIcon = L.divIcon({
-  className: 'custom-hospital-marker',
-  html: `<div style="background-color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border: 2px solid #ef4444; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"><div style="color: #ef4444; font-weight: bold; font-size: 18px; line-height: 1; margin-top: -2px;">+</div></div>`,
-  iconSize: [24, 24],
-  iconAnchor: [12, 12],
-});
+const IncidentMap = lazy(() => import('../components/IncidentMap'));
+const Incident3DView = lazy(() =>
+  import('../components/Incident3DView').then((module) => ({
+    default: module.Incident3DView,
+  })),
+);
 
 const STATUS_OPTIONS = [
   'New Alert',
@@ -57,6 +34,14 @@ function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
     Math.sin(dLon / 2) * Math.sin(dLon / 2); 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); 
   return R * c; // Distance in km
+}
+
+function HeavyPanelFallback({ label }: { label: string }) {
+  return (
+    <div className="flex h-full min-h-[18rem] items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-sm font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+      Loading {label}...
+    </div>
+  );
 }
 
 export default function IncidentDetail() {
@@ -239,7 +224,9 @@ export default function IncidentDetail() {
                 <Car className="w-5 h-5 text-[#005691] dark:text-blue-400" />
                 3D Incident Assessment View
               </h3>
-              <Incident3DView telemetry={incident.telemetry} passengerCount={incident.passengerCount} />
+              <Suspense fallback={<HeavyPanelFallback label="3D assessment" />}>
+                <Incident3DView telemetry={incident.telemetry} passengerCount={incident.passengerCount} />
+              </Suspense>
             </div>
           )}
 
@@ -318,36 +305,15 @@ export default function IncidentDetail() {
               Location Map
             </h3>
             <div className="w-full h-[300px] rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700">
-              <MapContainer
-                center={[incident.latitude, incident.longitude]}
-                zoom={13}
-                style={{ width: '100%', height: '100%', zIndex: 1 }}
-              >
-                <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                  url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+              <Suspense fallback={<HeavyPanelFallback label="map" />}>
+                <IncidentMap
+                  address={incident.address}
+                  latitude={incident.latitude}
+                  longitude={incident.longitude}
+                  severity={incident.severity}
+                  nearestHospital={nearestHospital}
                 />
-                <Marker 
-                  position={[incident.latitude, incident.longitude]}
-                  icon={createIncidentIcon(incident.severity)}
-                >
-                  <Popup>
-                    <div className="font-bold">Incident Location</div>
-                    <div>{incident.address}</div>
-                  </Popup>
-                </Marker>
-                {nearestHospital && (
-                  <Marker 
-                    position={[nearestHospital.hospital.latitude, nearestHospital.hospital.longitude]}
-                    icon={hospitalIcon}
-                  >
-                    <Popup>
-                      <div className="font-bold">{nearestHospital.hospital.name}</div>
-                      <div>Nearest Hospital</div>
-                    </Popup>
-                  </Marker>
-                )}
-              </MapContainer>
+              </Suspense>
             </div>
           </div>
 

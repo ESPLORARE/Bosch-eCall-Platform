@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -23,7 +23,8 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useLanguage, Language } from '../contexts/LanguageContext';
 import SettingsModal from './SettingsModal';
-import AegisAssistant from './AegisAssistant';
+
+const AegisAssistant = lazy(() => import('./AegisAssistant'));
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -108,6 +109,7 @@ export default function Layout() {
   const { language, setLanguage, t } = useLanguage();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState<'profile' | 'password' | 'notifications' | 'theme'>('profile');
+  const [shouldLoadAssistant, setShouldLoadAssistant] = useState(false);
 
   const openSettings = (tab: 'profile' | 'password' | 'notifications' | 'theme') => {
     setActiveSettingsTab(tab);
@@ -132,6 +134,22 @@ export default function Layout() {
       document.documentElement.classList.remove('dark');
     }
   }, [isDark]);
+
+  useEffect(() => {
+    const loadAssistant = () => setShouldLoadAssistant(true);
+
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(loadAssistant, { timeout: 2000 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+
+    const timeoutId = window.setTimeout(loadAssistant, 1200);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   return (
     <div className="flex flex-col h-screen bg-[#F8F9FA] dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans">
@@ -443,7 +461,11 @@ export default function Layout() {
         initialTab={activeSettingsTab} 
       />
       
-      <AegisAssistant />
+      {shouldLoadAssistant && (
+        <Suspense fallback={null}>
+          <AegisAssistant />
+        </Suspense>
+      )}
     </div>
   );
 }
