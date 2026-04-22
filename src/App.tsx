@@ -3,11 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { Suspense, lazy, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import { LanguageProvider } from './contexts/LanguageContext';
+import { api } from './services/api';
+import type { AuthUser } from './types';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Alerts = lazy(() => import('./pages/Alerts'));
@@ -33,12 +35,38 @@ function RouteFallback() {
 }
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
-  if (!isAuthenticated) {
+  useEffect(() => {
+    api
+      .getCurrentUser()
+      .then((session) => setCurrentUser(session.user))
+      .catch(() => setCurrentUser(null))
+      .finally(() => setAuthLoading(false));
+  }, []);
+
+  const handleLogout = async () => {
+    await api.logout();
+    setCurrentUser(null);
+  };
+
+  if (authLoading) {
     return (
       <LanguageProvider>
-        <Login onLogin={() => setIsAuthenticated(true)} />
+        <RouteFallback />
+      </LanguageProvider>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <LanguageProvider>
+        <Login
+          onLogin={() => {
+            api.getCurrentUser().then((session) => setCurrentUser(session.user));
+          }}
+        />
       </LanguageProvider>
     );
   }
@@ -48,7 +76,7 @@ export default function App() {
       <HashRouter>
         <Suspense fallback={<RouteFallback />}>
           <Routes>
-            <Route path="/" element={<Layout />}>
+            <Route path="/" element={<Layout user={currentUser} onLogout={handleLogout} />}>
               <Route index element={<Dashboard />} />
               <Route path="alerts" element={<Alerts />} />
               <Route path="incidents/:id" element={<IncidentDetail />} />

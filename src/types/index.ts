@@ -96,6 +96,21 @@ export interface Operator {
   notes: string;
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  role: 'Admin' | 'Supervisor' | 'Dispatcher' | 'Call Taker';
+  status: 'Active' | 'Suspended';
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface AuthResponse {
+  user: AuthUser;
+  expiresAt?: string;
+}
+
 export interface AnalyticsSummary {
   total: number;
   active: number;

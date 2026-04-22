@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'crypto';
 import { createRequire } from 'module';
 import path from 'path';
 import { mockPlatformApi } from '../data/mockPlatformData';
@@ -24,6 +25,22 @@ export interface AuditEvent {
   metadata: Record<string, unknown>;
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  role: 'Admin' | 'Supervisor' | 'Dispatcher' | 'Call Taker';
+  status: 'Active' | 'Suspended';
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface AuthSession {
+  token: string;
+  expiresAt: string;
+  user: AuthUser;
+}
+
 const require = createRequire(path.join(process.cwd(), 'server.ts'));
 const Database = require('better-sqlite3') as DatabaseConstructor;
 const DEFAULT_DB_PATH = path.join(process.cwd(), 'data', 'bosch-ecall-platform.sqlite');
@@ -39,6 +56,41 @@ function toPayload(value: unknown) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function hashToken(token: string) {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function toAuthUser(row: {
+  user_id: string;
+  email: string;
+  name: string;
+  role: AuthUser['role'];
+  status: AuthUser['status'];
+  created_at: string;
+  last_login_at: string | null;
+}): AuthUser {
+  return {
+    id: row.user_id,
+    email: row.email,
+    name: row.name,
+    role: row.role,
+    status: row.status,
+    createdAt: row.created_at,
+    lastLoginAt: row.last_login_at,
+  };
+}
+
+function hashPassword(password: string, salt = randomBytes(16).toString('hex')) {
+  const hash = scryptSync(password, salt, 64).toString('hex');
+  return { salt, hash };
+}
+
+function verifyPassword(password: string, salt: string, expectedHash: string) {
+  const actualHash = scryptSync(password, salt, 64);
+  const expected = Buffer.from(expectedHash, 'hex');
+  return actualHash.length === expected.length && timingSafeEqual(actualHash, expected);
 }
 
 function auditFromRow(row: {
@@ -284,6 +336,137 @@ export class PlatformStore {
     );
   }
 
+  hasUsers() {
+    const row = this.db.prepare('SELECT COUNT(*) AS count FROM auth_users').get() as { count: number };
+    return row.count > 0;
+  }
+
+  registerUser(data: { email: string; name: string; password: string; role?: AuthUser['role']; actor?: string }) {
+    const email = data.email.trim().toLowerCase();
+    const existing = this.db.prepare('SELECT user_id FROM auth_users WHERE email = ?').get(email);
+    if (existing) return null;
+
+    const userId = `USR-${randomBytes(6).toString('hex').toUpperCase()}`;
+    const timestamp = nowIso();
+    const { salt, hash } = hashPassword(data.password);
+    const role = data.role || (this.hasUsers() ? 'Dispatcher' : 'Admin');
+
+    this.db
+      .prepare(
+        `INSERT INTO auth_users (
+          user_id, email, name, role, status, password_hash, password_salt,
+          failed_attempts, locked_until, created_at, updated_at, last_login_at
+        ) VALUES (?, ?, ?, ?, 'Active', ?, ?, 0, NULL, ?, ?, NULL)`,
+      )
+      .run(userId, email, data.name.trim(), role, hash, salt, timestamp, timestamp);
+
+    this.createAuditEvent(data.actor || 'System', 'auth.user_registered', 'auth_user', userId, {
+      email,
+      role,
+    });
+
+    return this.getUserById(userId);
+  }
+
+  authenticateUser(email: string, password: string, metadata: { ip?: string; userAgent?: string }) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const row = this.db
+      .prepare(
+        `SELECT user_id, email, name, role, status, password_hash, password_salt,
+                failed_attempts, locked_until, created_at, last_login_at
+         FROM auth_users WHERE email = ?`,
+      )
+      .get(normalizedEmail) as
+      | {
+          user_id: string;
+          email: string;
+          name: string;
+          role: AuthUser['role'];
+          status: AuthUser['status'];
+          password_hash: string;
+          password_salt: string;
+          failed_attempts: number;
+          locked_until: string | null;
+          created_at: string;
+          last_login_at: string | null;
+        }
+      | undefined;
+
+    if (!row) {
+      hashPassword(password, 'missing-user-padding-salt');
+      return { ok: false as const, reason: 'Invalid credentials' };
+    }
+
+    if (row.status !== 'Active') {
+      return { ok: false as const, reason: 'Account is suspended' };
+    }
+
+    if (row.locked_until && new Date(row.locked_until).getTime() > Date.now()) {
+      return { ok: false as const, reason: 'Account is temporarily locked' };
+    }
+
+    if (!verifyPassword(password, row.password_salt, row.password_hash)) {
+      const failedAttempts = row.failed_attempts + 1;
+      const lockedUntil =
+        failedAttempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000).toISOString() : null;
+      this.db
+        .prepare('UPDATE auth_users SET failed_attempts = ?, locked_until = ?, updated_at = ? WHERE user_id = ?')
+        .run(failedAttempts, lockedUntil, nowIso(), row.user_id);
+      this.createAuditEvent('System', 'auth.login_failed', 'auth_user', row.user_id, {
+        email: normalizedEmail,
+        ip: metadata.ip || null,
+        locked: Boolean(lockedUntil),
+      });
+      return { ok: false as const, reason: 'Invalid credentials' };
+    }
+
+    this.db
+      .prepare('UPDATE auth_users SET failed_attempts = 0, locked_until = NULL, last_login_at = ?, updated_at = ? WHERE user_id = ?')
+      .run(nowIso(), nowIso(), row.user_id);
+
+    const user = this.getUserById(row.user_id);
+    if (!user) return { ok: false as const, reason: 'User not found' };
+
+    const session = this.createSession(user, metadata);
+    this.createAuditEvent(user.email, 'auth.login_succeeded', 'auth_user', user.id, {
+      ip: metadata.ip || null,
+    });
+    return { ok: true as const, session };
+  }
+
+  getSession(token: string) {
+    const tokenHash = hashToken(token);
+    const row = this.db
+      .prepare(
+        `SELECT s.expires_at, u.user_id, u.email, u.name, u.role, u.status, u.created_at, u.last_login_at
+         FROM auth_sessions s
+         JOIN auth_users u ON u.user_id = s.user_id
+         WHERE s.token_hash = ? AND datetime(s.expires_at) > datetime('now') AND u.status = 'Active'`,
+      )
+      .get(tokenHash) as
+      | {
+          expires_at: string;
+          user_id: string;
+          email: string;
+          name: string;
+          role: AuthUser['role'];
+          status: AuthUser['status'];
+          created_at: string;
+          last_login_at: string | null;
+        }
+      | undefined;
+
+    if (!row) return null;
+    return {
+      expiresAt: row.expires_at,
+      user: toAuthUser(row),
+    };
+  }
+
+  deleteSession(token: string) {
+    this.db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(hashToken(token));
+  }
+
   health() {
     const incidentCount = (this.db.prepare('SELECT COUNT(*) AS count FROM incidents').get() as { count: number }).count;
     const vehicleCount = (this.db.prepare('SELECT COUNT(*) AS count FROM vehicles').get() as { count: number }).count;
@@ -368,16 +551,48 @@ export class PlatformStore {
         metadata TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS auth_users (
+        user_id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        status TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        password_salt TEXT NOT NULL,
+        failed_attempts INTEGER NOT NULL DEFAULT 0,
+        locked_until TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_login_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        session_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        user_agent TEXT,
+        ip_address TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(user_id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
       CREATE INDEX IF NOT EXISTS idx_incidents_vehicle_id ON incidents(vehicle_id);
       CREATE INDEX IF NOT EXISTS idx_incidents_timestamp ON incidents(timestamp);
       CREATE INDEX IF NOT EXISTS idx_vehicles_plate_number ON vehicles(plate_number);
       CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_events(entity_type, entity_id);
+      CREATE INDEX IF NOT EXISTS idx_auth_users_email ON auth_users(email);
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
     `);
 
     this.db
       .prepare('INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)')
       .run(1, nowIso());
+    this.db
+      .prepare('INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+      .run(2, nowIso());
   }
 
   private upsertIncident(incident: Incident) {
@@ -484,6 +699,51 @@ export class PlatformStore {
     return parsePayload<Operator>(
       this.db.prepare('SELECT payload FROM operators WHERE operator_id = ?').get(operatorId) as JsonRow | undefined,
     );
+  }
+
+  private getUserById(userId: string) {
+    const row = this.db
+      .prepare(
+        `SELECT user_id, email, name, role, status, created_at, last_login_at
+         FROM auth_users WHERE user_id = ?`,
+      )
+      .get(userId) as
+      | {
+          user_id: string;
+          email: string;
+          name: string;
+          role: AuthUser['role'];
+          status: AuthUser['status'];
+          created_at: string;
+          last_login_at: string | null;
+        }
+      | undefined;
+
+    return row ? toAuthUser(row) : null;
+  }
+
+  private createSession(user: AuthUser, metadata: { ip?: string; userAgent?: string }): AuthSession {
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+
+    this.db
+      .prepare(
+        `INSERT INTO auth_sessions (
+          session_id, user_id, token_hash, user_agent, ip_address, created_at, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        `SES-${randomBytes(6).toString('hex').toUpperCase()}`,
+        user.id,
+        hashToken(token),
+        metadata.userAgent || null,
+        metadata.ip || null,
+        nowIso(),
+        expiresAt,
+      );
+
+    this.db.prepare("DELETE FROM auth_sessions WHERE datetime(expires_at) <= datetime('now')").run();
+    return { token, expiresAt, user };
   }
 
   private setSetting(key: string, value: unknown) {

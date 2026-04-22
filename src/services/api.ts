@@ -1,4 +1,4 @@
-import { Incident, Vehicle, AnalyticsData, Hospital, Weather, Operator } from '../types';
+import { Incident, Vehicle, AnalyticsData, Hospital, Weather, Operator, AuthResponse } from '../types';
 import { mockPlatformApi } from '../data/mockPlatformData';
 import { generateAssistantFallback } from './assistantMock';
 
@@ -12,18 +12,71 @@ async function requestJson<T>(path: string, fallback: () => Promise<T>, init?: R
   }
 
   try {
-    const res = await fetch(path, init);
+    const res = await fetch(path, { credentials: 'same-origin', ...init });
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`Request failed: ${res.status}`);
+    }
     if (!res.ok) {
       throw new Error(`Request failed: ${res.status}`);
     }
     return (await res.json()) as T;
   } catch (error) {
+    if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
+      throw error;
+    }
     console.warn(`Falling back to mock API for ${path}`, error);
     return fallback();
   }
 }
 
 export const api = {
+  login: async (email: string, password: string): Promise<AuthResponse> => {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Login failed');
+    }
+    return data as AuthResponse;
+  },
+  register: async (data: {
+    name: string;
+    email: string;
+    password: string;
+    registrationCode?: string;
+  }): Promise<AuthResponse> => {
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+
+    const responseData = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(responseData.error || 'Registration failed');
+    }
+    return responseData as AuthResponse;
+  },
+  getCurrentUser: async (): Promise<AuthResponse> => {
+    const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Not authenticated');
+    }
+    return data as AuthResponse;
+  },
+  logout: async (): Promise<void> => {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+  },
   getIncidents: async (): Promise<Incident[]> => {
     return requestJson('/api/incidents', () => mockPlatformApi.getIncidents());
   },
@@ -81,7 +134,10 @@ export const api = {
     }
 
     try {
-      await fetch(`/api/operators/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/operators/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
+      }
     } catch (error) {
       console.warn(`Falling back to mock API for /api/operators/${id}`, error);
       await mockPlatformApi.deleteOperator(id);
@@ -105,6 +161,7 @@ export const api = {
     try {
       const res = await fetch('/api/assistant-chat', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message }),
       });

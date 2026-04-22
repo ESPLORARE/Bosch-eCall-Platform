@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
@@ -12,6 +12,75 @@ for (const envFile of ['.env.local', '.env']) {
   if (fs.existsSync(envFile)) {
     dotenv.config({ path: envFile, override: false });
   }
+}
+
+const SESSION_COOKIE = 'bosch_session';
+const authRateLimits = new Map<string, { count: number; resetAt: number }>();
+
+function parseCookies(cookieHeader = '') {
+  return Object.fromEntries(
+    cookieHeader
+      .split(';')
+      .map((cookie) => cookie.trim())
+      .filter(Boolean)
+      .map((cookie) => {
+        const separatorIndex = cookie.indexOf('=');
+        return separatorIndex === -1
+          ? [cookie, '']
+          : [cookie.slice(0, separatorIndex), decodeURIComponent(cookie.slice(separatorIndex + 1))];
+      }),
+  );
+}
+
+function getClientIp(req: Request) {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (typeof forwardedFor === 'string') {
+    return forwardedFor.split(',')[0].trim();
+  }
+  return req.socket.remoteAddress || 'unknown';
+}
+
+function setSessionCookie(res: Response, token: string, expiresAt: string) {
+  const secure = process.env.COOKIE_SECURE === 'false' ? '' : process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.setHeader(
+    'Set-Cookie',
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Expires=${new Date(expiresAt).toUTCString()}${secure}`,
+  );
+}
+
+function clearSessionCookie(res: Response) {
+  res.setHeader(
+    'Set-Cookie',
+    `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
+  );
+}
+
+function sanitizeAuthUser(user: unknown) {
+  return user;
+}
+
+function isStrongEnoughPassword(password: string) {
+  return (
+    password.length >= 10 &&
+    /[A-Z]/.test(password) &&
+    /[a-z]/.test(password) &&
+    /\d/.test(password) &&
+    /[^A-Za-z0-9]/.test(password)
+  );
+}
+
+function isAuthRateLimited(req: Request) {
+  const ip = getClientIp(req);
+  const now = Date.now();
+  const current = authRateLimits.get(ip);
+
+  if (!current || current.resetAt <= now) {
+    authRateLimits.set(ip, { count: 1, resetAt: now + 10 * 60 * 1000 });
+    return false;
+  }
+
+  current.count += 1;
+  return current.count > 20;
 }
 
 // --- Mock Data ---
@@ -365,12 +434,147 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
   const store = await createPlatformStore();
 
-  app.use(express.json());
+  app.disable('x-powered-by');
+  app.use(express.json({ limit: '64kb' }));
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
+    next();
+  });
 
   // --- API Routes ---
 
   app.get('/api/health', (req, res) => {
     res.json(store.health());
+  });
+
+  app.post('/api/auth/register', (req, res) => {
+    if (isAuthRateLimited(req)) {
+      res.status(429).json({ error: 'Too many authentication attempts. Please try again later.' });
+      return;
+    }
+
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const registrationCode = typeof req.body?.registrationCode === 'string' ? req.body.registrationCode.trim() : '';
+    const isFirstUser = !store.hasUsers();
+
+    if (!name || !email || !password) {
+      res.status(400).json({ error: 'Name, email, and password are required' });
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      res.status(400).json({ error: 'Please enter a valid email address' });
+      return;
+    }
+
+    if (!isStrongEnoughPassword(password)) {
+      res.status(400).json({
+        error: 'Password must be at least 10 characters and include uppercase, lowercase, number, and symbol',
+      });
+      return;
+    }
+
+    if (!isFirstUser) {
+      const expectedCode = process.env.REGISTRATION_CODE;
+      if (!expectedCode || registrationCode !== expectedCode) {
+        res.status(403).json({ error: 'Registration requires an organization invite code' });
+        return;
+      }
+    }
+
+    const user = store.registerUser({
+      name,
+      email,
+      password,
+      role: isFirstUser ? 'Admin' : 'Dispatcher',
+      actor: email,
+    });
+
+    if (!user) {
+      res.status(409).json({ error: 'An account with this email already exists' });
+      return;
+    }
+
+    const login = store.authenticateUser(email, password, {
+      ip: getClientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
+
+    if (!login.ok) {
+      res.status(201).json({ user: sanitizeAuthUser(user) });
+      return;
+    }
+
+    setSessionCookie(res, login.session.token, login.session.expiresAt);
+    res.status(201).json({ user: sanitizeAuthUser(login.session.user), expiresAt: login.session.expiresAt });
+  });
+
+  app.post('/api/auth/login', (req, res) => {
+    if (isAuthRateLimited(req)) {
+      res.status(429).json({ error: 'Too many authentication attempts. Please try again later.' });
+      return;
+    }
+
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+    if (!email || !password) {
+      res.status(400).json({ error: 'Email and password are required' });
+      return;
+    }
+
+    const login = store.authenticateUser(email, password, {
+      ip: getClientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
+
+    if (!login.ok) {
+      res.status(401).json({ error: login.reason });
+      return;
+    }
+
+    setSessionCookie(res, login.session.token, login.session.expiresAt);
+    res.json({ user: sanitizeAuthUser(login.session.user), expiresAt: login.session.expiresAt });
+  });
+
+  app.get('/api/auth/me', (req, res) => {
+    const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    const session = token ? store.getSession(token) : null;
+    if (!session) {
+      res.status(401).json({ error: 'Not authenticated' });
+      return;
+    }
+    res.json({ user: sanitizeAuthUser(session.user), expiresAt: session.expiresAt });
+  });
+
+  app.post('/api/auth/logout', (req, res) => {
+    const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    if (token) {
+      store.deleteSession(token);
+    }
+    clearSessionCookie(res);
+    res.status(204).send();
+  });
+
+  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/auth/') || req.path === '/health') {
+      next();
+      return;
+    }
+
+    const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    const session = token ? store.getSession(token) : null;
+    if (!session) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    res.locals.authUser = session.user;
+    next();
   });
 
   app.get('/api/audit-events', (req, res) => {
@@ -540,6 +744,10 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    const configuredBasePath = (process.env.VITE_BASE_PATH || '/Bosch-eCall-Platform/').replace(/\/$/, '');
+    if (configuredBasePath) {
+      app.use(configuredBasePath, express.static(distPath));
+    }
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
