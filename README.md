@@ -20,6 +20,19 @@ View your app in AI Studio: https://ai.studio/apps/f017d928-a66a-4af2-b3f3-18f19
 4. Run the app:
    `npm run dev`
 
+## Backend and Database
+
+The local server uses Express with a persistent SQLite database. On first start it creates
+`./data/bosch-ecall-platform.sqlite`, runs the schema migration, and seeds the platform with
+demo incidents, vehicles, hospitals, operators, weather, and audit metadata.
+
+Useful backend endpoints:
+- `GET /api/health` checks database connectivity and record counts.
+- `GET /api/audit-events` returns recent operational audit events.
+- Existing `/api/incidents`, `/api/vehicles`, `/api/operators`, `/api/analytics`, and assistant APIs now read from the database.
+
+Set `DATABASE_PATH` in `.env.local` if you want the database file somewhere else.
+
 Secrets policy:
 `GEMINI_API_KEY` and similar values belong in `.env.local` or your deployment secret manager only.
 `VITE_*` variables are public and will be visible in the browser.

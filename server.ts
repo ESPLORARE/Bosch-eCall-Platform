@@ -5,6 +5,7 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { generateAssistantFallback } from './src/services/assistantMock';
+import { createPlatformStore } from './src/server/platformStore';
 import type { Hospital, Incident, Operator, Vehicle, Weather } from './src/types';
 
 for (const envFile of ['.env.local', '.env']) {
@@ -361,18 +362,28 @@ let operators: Operator[] = [
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
+  const store = await createPlatformStore();
 
   app.use(express.json());
 
   // --- API Routes ---
 
+  app.get('/api/health', (req, res) => {
+    res.json(store.health());
+  });
+
+  app.get('/api/audit-events', (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    res.json(store.listAuditEvents(limit));
+  });
+
   app.get('/api/incidents', (req, res) => {
-    res.json(incidents.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+    res.json(store.listIncidents());
   });
 
   app.get('/api/incidents/:id', (req, res) => {
-    const incident = incidents.find(i => i.incidentId === req.params.id);
+    const incident = store.getIncident(req.params.id);
     if (incident) {
       res.json(incident);
     } else {
@@ -381,43 +392,15 @@ async function startServer() {
   });
 
   app.post('/api/incidents', (req, res) => {
-    const newIncident = {
-      incidentId: `INC-${new Date().getFullYear()}-${String(incidents.length + 1).padStart(3, '0')}`,
-      timestamp: new Date().toISOString(),
-      status: 'New Alert',
-      assignedOperator: null,
-      responseTime: null,
-      mode: 'NG eCall',
-      msdReceived: true,
-      actionLogs: [
-        { timestamp: new Date().toISOString(), action: 'System: SOS received from vehicle.' }
-      ],
-      ...req.body
-    };
-    incidents.push(newIncident);
+    const newIncident = store.createIncident(req.body);
     res.status(201).json(newIncident);
   });
 
   app.put('/api/incidents/:id/status', (req, res) => {
     const { status, operator, note } = req.body;
-    const incidentIndex = incidents.findIndex(i => i.incidentId === req.params.id);
-    
-    if (incidentIndex !== -1) {
-      const incident = incidents[incidentIndex];
-      incident.status = status;
-      if (operator && !incident.assignedOperator) {
-        incident.assignedOperator = operator;
-        incident.responseTime = Math.floor((new Date().getTime() - new Date(incident.timestamp).getTime()) / 1000);
-      }
-      
-      let actionText = `${operator || 'System'}: Status updated to ${status}.`;
-      if (note) actionText += ` Note: ${note}`;
-      
-      incident.actionLogs.push({
-        timestamp: new Date().toISOString(),
-        action: actionText
-      });
-      
+    const incident = store.updateIncidentStatus(req.params.id, status, operator, note);
+
+    if (incident) {
       res.json(incident);
     } else {
       res.status(404).json({ error: 'Incident not found' });
@@ -425,72 +408,51 @@ async function startServer() {
   });
 
   app.get('/api/vehicles', (req, res) => {
-    res.json(vehicles);
+    res.json(store.listVehicles());
   });
 
   app.get('/api/hospitals', (req, res) => {
-    res.json(hospitals);
+    res.json(store.listHospitals());
   });
 
   app.get('/api/weather', (req, res) => {
-    res.json(weather);
+    const currentWeather = store.getWeather();
+    if (currentWeather) {
+      res.json(currentWeather);
+    } else {
+      res.status(404).json({ error: 'Weather not configured' });
+    }
   });
 
   app.get('/api/operators', (req, res) => {
-    res.json(operators);
+    res.json(store.listOperators());
   });
 
   app.post('/api/operators', (req, res) => {
-    const newOperator = {
-      id: `OP-${String(operators.length + 1).padStart(3, '0')}`,
-      activeIncidents: 0,
-      ...req.body
-    };
-    operators.push(newOperator);
+    const newOperator = store.createOperator(req.body);
     res.status(201).json(newOperator);
   });
 
   app.put('/api/operators/:id', (req, res) => {
-    const index = operators.findIndex(o => o.id === req.params.id);
-    if (index !== -1) {
-      operators[index] = { ...operators[index], ...req.body };
-      res.json(operators[index]);
+    const operator = store.updateOperator(req.params.id, req.body);
+    if (operator) {
+      res.json(operator);
     } else {
       res.status(404).json({ error: 'Operator not found' });
     }
   });
 
   app.delete('/api/operators/:id', (req, res) => {
-    operators = operators.filter(o => o.id !== req.params.id);
-    res.status(204).send();
+    const deleted = store.deleteOperator(req.params.id);
+    if (deleted) {
+      res.status(204).send();
+    } else {
+      res.status(404).json({ error: 'Operator not found' });
+    }
   });
 
   app.get('/api/analytics', (req, res) => {
-    const total = incidents.length;
-    const active = incidents.filter(i => !['Resolved', 'Closed'].includes(i.status)).length;
-    const resolved = incidents.filter(i => ['Resolved', 'Closed'].includes(i.status)).length;
-    
-    const responseTimes = incidents.filter(i => i.responseTime !== null).map(i => i.responseTime as number);
-    const avgResponseTime = responseTimes.length > 0 
-      ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length) 
-      : 0;
-
-    const severityDistribution = {
-      high: incidents.filter(i => i.severity === 'high').length,
-      medium: incidents.filter(i => i.severity === 'medium').length,
-      low: incidents.filter(i => i.severity === 'low').length,
-    };
-
-    const triggerDistribution = {
-      automatic: incidents.filter(i => i.triggerType === 'automatic').length,
-      manual: incidents.filter(i => i.triggerType === 'manual').length,
-    };
-
-    res.json({
-      summary: { total, active, resolved, avgResponseTime },
-      severityDistribution,
-      triggerDistribution
-    });
+    res.json(store.getAnalytics());
   });
 
   app.post('/api/assistant-chat', async (req, res) => {
@@ -501,10 +463,13 @@ async function startServer() {
       return;
     }
 
+    const currentIncidents = store.listIncidents();
+    const currentOperators = store.listOperators();
+    const currentHospitals = store.listHospitals();
     const fallbackReply = await generateAssistantFallback(message, {
-      incidents,
-      operators,
-      hospitals,
+      incidents: currentIncidents,
+      operators: currentOperators,
+      hospitals: currentHospitals,
     });
 
     if (!process.env.GEMINI_API_KEY) {
@@ -514,7 +479,7 @@ async function startServer() {
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const incidentSnapshot = incidents
+      const incidentSnapshot = currentIncidents
         .slice(0, 8)
         .map((incident) => ({
           incidentId: incident.incidentId,
@@ -528,7 +493,7 @@ async function startServer() {
           notes: incident.notes,
           aiRecommendations: incident.aiRecommendations,
         }));
-      const operatorSnapshot = operators.map((operator) => ({
+      const operatorSnapshot = currentOperators.map((operator) => ({
         id: operator.id,
         name: operator.name,
         role: operator.role,
@@ -536,7 +501,7 @@ async function startServer() {
         activeIncidents: operator.activeIncidents,
         assignedRegion: operator.assignedRegion,
       }));
-      const hospitalSnapshot = hospitals.slice(0, 8);
+      const hospitalSnapshot = currentHospitals.slice(0, 8);
 
       const prompt = [
         'You are Aegis AI, an operational copilot for a Bosch eCall emergency response dashboard.',

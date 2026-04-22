@@ -14,6 +14,7 @@ const Alerts = lazy(() => import('./pages/Alerts'));
 const IncidentDetail = lazy(() => import('./pages/IncidentDetail'));
 const MapMonitoring = lazy(() => import('./pages/MapMonitoring'));
 const VehicleRegistry = lazy(() => import('./pages/VehicleRegistry'));
+const DigitalTwin = lazy(() => import('./pages/DigitalTwin'));
 const IncidentHistory = lazy(() => import('./pages/IncidentHistory'));
 const Analytics = lazy(() => import('./pages/Analytics'));
 const Simulator = lazy(() => import('./pages/Simulator'));
@@ -53,6 +54,7 @@ export default function App() {
               <Route path="incidents/:id" element={<IncidentDetail />} />
               <Route path="map" element={<MapMonitoring />} />
               <Route path="vehicles" element={<VehicleRegistry />} />
+              <Route path="digital-twin" element={<DigitalTwin />} />
               <Route path="operators" element={<OperatorManagement />} />
               <Route path="sop" element={<SOPCenter />} />
               <Route path="profile" element={<Profile />} />

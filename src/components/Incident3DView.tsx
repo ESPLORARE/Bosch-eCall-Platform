@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import {
   OrbitControls,
@@ -9,6 +9,7 @@ import {
   Sparkles,
   Line,
   Float,
+  RoundedBox,
 } from '@react-three/drei';
 import { EffectComposer, Bloom, ChromaticAberration, Vignette } from '@react-three/postprocessing';
 import * as THREE from 'three';
@@ -191,295 +192,437 @@ const PassengerMarker = ({
   );
 };
 
-const AeroWheel = ({ position }: { position: [number, number, number] }) => {
+const AeroWheel = ({ position, side }: { position: [number, number, number]; side: 1 | -1 }) => {
   return (
     <group position={position}>
-      <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
-        <torusGeometry args={[0.29, 0.1, 18, 44]} />
-        <meshStandardMaterial color="#0f172a" roughness={0.96} />
+      <mesh rotation={[0, Math.PI / 2, 0]} castShadow>
+        <torusGeometry args={[0.32, 0.11, 22, 56]} />
+        <meshStandardMaterial color="#020617" roughness={0.92} metalness={0.08} />
       </mesh>
 
-      <mesh rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[0.295, 0.295, 0.12, 36]} />
-        <meshStandardMaterial color="#a8b1bf" metalness={0.88} roughness={0.16} />
+      <mesh rotation={[0, 0, Math.PI / 2]} position={[side * 0.015, 0, 0]}>
+        <cylinderGeometry args={[0.28, 0.28, 0.16, 48]} />
+        <meshStandardMaterial color="#cbd5e1" metalness={0.9} roughness={0.18} />
       </mesh>
 
-      <mesh rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[0.24, 0.24, 0.125, 5]} />
-        <meshStandardMaterial color="#1e293b" metalness={0.45} roughness={0.46} />
-      </mesh>
+      {[0, 1, 2, 3, 4].map((spoke) => (
+        <mesh key={spoke} rotation={[Math.PI / 2, 0, (spoke * Math.PI * 2) / 5]} position={[side * 0.105, 0, 0]}>
+          <boxGeometry args={[0.055, 0.48, 0.035]} />
+          <meshStandardMaterial color="#64748b" metalness={0.72} roughness={0.2} />
+        </mesh>
+      ))}
 
       <mesh rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[0.068, 0.068, 0.13, 24]} />
+        <cylinderGeometry args={[0.075, 0.075, 0.18, 28]} />
         <meshStandardMaterial color="#f8fafc" metalness={0.95} roughness={0.08} />
       </mesh>
     </group>
   );
 };
 
-const FenderBulge = ({ position, color }: { position: [number, number, number]; color: string }) => (
-  <mesh position={position} castShadow>
-    <sphereGeometry args={[0.42, 28, 28]} />
-    <meshPhysicalMaterial color={color} metalness={0.6} roughness={0.22} clearcoat={1} clearcoatRoughness={0.1} />
-  </mesh>
+const WheelWell = ({ position, side }: { position: [number, number, number]; side: 1 | -1 }) => (
+  <group position={position}>
+    <mesh rotation={[0, Math.PI / 2, 0]} position={[-side * 0.02, 0, 0]}>
+      <circleGeometry args={[0.48, 48]} />
+      <meshStandardMaterial color="#030712" roughness={0.96} side={THREE.DoubleSide} />
+    </mesh>
+    <mesh rotation={[0, Math.PI / 2, 0]}>
+      <torusGeometry args={[0.48, 0.025, 10, 56]} />
+      <meshStandardMaterial color="#111827" metalness={0.35} roughness={0.55} />
+    </mesh>
+  </group>
 );
 
-const PremiumTeslaEV = ({ color = '#f3f6fb' }: { color?: string }) => {
-  const bodyShape = React.useMemo(() => {
-    const s = new THREE.Shape();
-    s.moveTo(-2.35, 0.16);
-    s.quadraticCurveTo(-2.48, 0.2, -2.46, 0.32);
-    s.quadraticCurveTo(-2.42, 0.68, -2.05, 0.86);
-    s.quadraticCurveTo(-1.72, 1.0, -1.1, 1.03);
-    s.lineTo(0.45, 1.03);
-    s.quadraticCurveTo(1.15, 0.99, 1.78, 0.86);
-    s.quadraticCurveTo(2.18, 0.75, 2.42, 0.54);
-    s.quadraticCurveTo(2.57, 0.4, 2.56, 0.26);
-    s.quadraticCurveTo(2.5, 0.12, 2.25, 0.1);
-    s.lineTo(-2.16, 0.1);
-    s.quadraticCurveTo(-2.3, 0.11, -2.35, 0.16);
-    return s;
-  }, []);
+type PaintProps = {
+  color: string;
+  metalness: number;
+  roughness: number;
+  clearcoat: number;
+  clearcoatRoughness: number;
+  envMapIntensity: number;
+};
 
-  const greenhouseShape = React.useMemo(() => {
-    const s = new THREE.Shape();
-    s.moveTo(1.02, 0.92);
-    s.quadraticCurveTo(0.78, 1.18, 0.42, 1.33);
-    s.quadraticCurveTo(0.04, 1.49, -0.48, 1.5);
-    s.quadraticCurveTo(-0.95, 1.49, -1.35, 1.34);
-    s.quadraticCurveTo(-1.73, 1.16, -2.02, 0.93);
-    s.quadraticCurveTo(-1.2, 0.97, -0.05, 0.98);
-    s.quadraticCurveTo(0.72, 0.98, 1.02, 0.92);
-    return s;
-  }, []);
+type BodySection = {
+  z: number;
+  lowerHalfWidth: number;
+  shoulderHalfWidth: number;
+  crownHalfWidth: number;
+  bottomY: number;
+  shoulderY: number;
+  crownY: number;
+};
 
-  const bodyExtrudeSettings = React.useMemo(
-    () => ({
-      depth: 1.94,
-      bevelEnabled: true,
-      bevelSegments: 18,
-      steps: 2,
-      bevelSize: 0.12,
-      bevelThickness: 0.1,
-      curveSegments: 28,
-    }),
+type CabinSection = {
+  z: number;
+  lowerHalfWidth: number;
+  roofHalfWidth: number;
+  bottomY: number;
+  roofY: number;
+};
+
+function createSectionedBodyGeometry(sections: BodySection[]) {
+  const vertices: number[] = [];
+  const indices: number[] = [];
+  const ringSize = 6;
+
+  sections.forEach((section) => {
+    vertices.push(
+      -section.lowerHalfWidth,
+      section.bottomY,
+      section.z,
+      -section.shoulderHalfWidth,
+      section.shoulderY,
+      section.z,
+      -section.crownHalfWidth,
+      section.crownY,
+      section.z,
+      section.crownHalfWidth,
+      section.crownY,
+      section.z,
+      section.shoulderHalfWidth,
+      section.shoulderY,
+      section.z,
+      section.lowerHalfWidth,
+      section.bottomY,
+      section.z,
+    );
+  });
+
+  for (let sectionIndex = 0; sectionIndex < sections.length - 1; sectionIndex += 1) {
+    const current = sectionIndex * ringSize;
+    const next = (sectionIndex + 1) * ringSize;
+    for (let pointIndex = 0; pointIndex < ringSize; pointIndex += 1) {
+      const following = (pointIndex + 1) % ringSize;
+      indices.push(current + pointIndex, next + pointIndex, next + following);
+      indices.push(current + pointIndex, next + following, current + following);
+    }
+  }
+
+  const startCenter = vertices.length / 3;
+  const first = sections[0];
+  vertices.push(0, (first.bottomY + first.crownY) / 2, first.z);
+  for (let pointIndex = 0; pointIndex < ringSize; pointIndex += 1) {
+    indices.push(startCenter, pointIndex, (pointIndex + 1) % ringSize);
+  }
+
+  const endCenter = vertices.length / 3;
+  const last = sections[sections.length - 1];
+  const lastOffset = (sections.length - 1) * ringSize;
+  vertices.push(0, (last.bottomY + last.crownY) / 2, last.z);
+  for (let pointIndex = 0; pointIndex < ringSize; pointIndex += 1) {
+    indices.push(endCenter, lastOffset + ((pointIndex + 1) % ringSize), lastOffset + pointIndex);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function createSectionedCabinGeometry(sections: CabinSection[]) {
+  const vertices: number[] = [];
+  const indices: number[] = [];
+  const ringSize = 4;
+
+  sections.forEach((section) => {
+    vertices.push(
+      -section.lowerHalfWidth,
+      section.bottomY,
+      section.z,
+      -section.roofHalfWidth,
+      section.roofY,
+      section.z,
+      section.roofHalfWidth,
+      section.roofY,
+      section.z,
+      section.lowerHalfWidth,
+      section.bottomY,
+      section.z,
+    );
+  });
+
+  for (let sectionIndex = 0; sectionIndex < sections.length - 1; sectionIndex += 1) {
+    const current = sectionIndex * ringSize;
+    const next = (sectionIndex + 1) * ringSize;
+    for (let pointIndex = 0; pointIndex < ringSize; pointIndex += 1) {
+      const following = (pointIndex + 1) % ringSize;
+      indices.push(current + pointIndex, next + pointIndex, next + following);
+      indices.push(current + pointIndex, next + following, current + following);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function createPanelGeometry(points: Array<[number, number, number]>) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(points.flat(), 3));
+  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+const SculptedBody = ({ paint }: { paint: PaintProps }) => {
+  const geometry = useMemo(
+    () =>
+      createSectionedBodyGeometry([
+        { z: -2.34, lowerHalfWidth: 0.68, shoulderHalfWidth: 0.88, crownHalfWidth: 0.64, bottomY: 0.28, shoulderY: 0.72, crownY: 0.74 },
+        { z: -1.92, lowerHalfWidth: 1.04, shoulderHalfWidth: 1.1, crownHalfWidth: 0.86, bottomY: 0.2, shoulderY: 0.86, crownY: 0.92 },
+        { z: -0.72, lowerHalfWidth: 1.13, shoulderHalfWidth: 1.17, crownHalfWidth: 0.95, bottomY: 0.18, shoulderY: 0.9, crownY: 0.96 },
+        { z: 0.68, lowerHalfWidth: 1.12, shoulderHalfWidth: 1.15, crownHalfWidth: 0.88, bottomY: 0.18, shoulderY: 0.9, crownY: 0.88 },
+        { z: 1.56, lowerHalfWidth: 0.98, shoulderHalfWidth: 1.02, crownHalfWidth: 0.62, bottomY: 0.22, shoulderY: 0.8, crownY: 0.72 },
+        { z: 2.34, lowerHalfWidth: 0.66, shoulderHalfWidth: 0.74, crownHalfWidth: 0.44, bottomY: 0.34, shoulderY: 0.62, crownY: 0.58 },
+      ]),
     [],
-  );
-
-  const greenhouseExtrudeSettings = React.useMemo(
-    () => ({
-      depth: 1.5,
-      bevelEnabled: true,
-      bevelSegments: 16,
-      steps: 2,
-      bevelSize: 0.08,
-      bevelThickness: 0.04,
-      curveSegments: 28,
-    }),
-    [],
-  );
-
-  const wheelPositions: [number, number, number][] = [
-    [-0.98, 0.34, 1.46],
-    [0.98, 0.34, 1.46],
-    [-0.98, 0.34, -1.38],
-    [0.98, 0.34, -1.38],
-  ];
-
-  const bodyMaterial = (
-    <meshPhysicalMaterial
-      color={color}
-      metalness={0.68}
-      roughness={0.18}
-      clearcoat={1}
-      clearcoatRoughness={0.08}
-      reflectivity={1}
-      envMapIntensity={1.35}
-    />
   );
 
   return (
+    <mesh geometry={geometry} castShadow receiveShadow>
+      <meshPhysicalMaterial {...paint} />
+    </mesh>
+  );
+};
+
+const SculptedCabin = () => {
+  const geometry = useMemo(
+    () =>
+      createSectionedCabinGeometry([
+        { z: -1.12, lowerHalfWidth: 0.74, roofHalfWidth: 0.5, bottomY: 0.92, roofY: 1.22 },
+        { z: -0.66, lowerHalfWidth: 0.86, roofHalfWidth: 0.66, bottomY: 1, roofY: 1.48 },
+        { z: 0.16, lowerHalfWidth: 0.86, roofHalfWidth: 0.7, bottomY: 1.02, roofY: 1.58 },
+        { z: 0.82, lowerHalfWidth: 0.62, roofHalfWidth: 0.4, bottomY: 0.9, roofY: 1.2 },
+      ]),
+    [],
+  );
+
+  return (
+    <mesh geometry={geometry} castShadow>
+      <meshPhysicalMaterial color="#06101d" metalness={0.08} roughness={0.18} transparent opacity={0.58} depthWrite={false} envMapIntensity={0.7} />
+    </mesh>
+  );
+};
+
+const BodyPanel = ({
+  points,
+  color,
+  opacity = 0.88,
+}: {
+  points: Array<[number, number, number]>;
+  color: string;
+  opacity?: number;
+}) => {
+  const geometry = useMemo(() => createPanelGeometry(points), [points]);
+
+  return (
+    <mesh geometry={geometry}>
+      <meshPhysicalMaterial color={color} transparent opacity={opacity} roughness={0.05} metalness={0.12} side={THREE.DoubleSide} envMapIntensity={1.8} />
+    </mesh>
+  );
+};
+
+export const PremiumTeslaEV = ({ color = '#f3f6fb' }: { color?: string }) => {
+  const paintColor = useMemo(() => {
+    const base = new THREE.Color(color);
+    base.lerp(new THREE.Color('#aebdcc'), 0.26);
+    return `#${base.getHexString()}`;
+  }, [color]);
+
+  const wheelPositions: Array<{ position: [number, number, number]; side: 1 | -1 }> = [
+    { position: [-1.16, 0.38, 1.42], side: -1 },
+    { position: [1.16, 0.38, 1.42], side: 1 },
+    { position: [-1.16, 0.38, -1.45], side: -1 },
+    { position: [1.16, 0.38, -1.45], side: 1 },
+  ];
+
+  const bodyMaterialProps = {
+    color: paintColor,
+    metalness: 0.46,
+    roughness: 0.28,
+    clearcoat: 1,
+    clearcoatRoughness: 0.1,
+    envMapIntensity: 1.22,
+  };
+
+  return (
     <group>
-      <group rotation={[0, -Math.PI / 2, 0]}>
-        <mesh position={[0, -0.02, -0.97]} castShadow receiveShadow>
-          <extrudeGeometry args={[bodyShape, bodyExtrudeSettings]} />
-          {bodyMaterial}
-        </mesh>
+      <SculptedBody paint={bodyMaterialProps} />
+      <SculptedCabin />
 
-        <mesh position={[0, 0.03, -0.75]} castShadow>
-          <extrudeGeometry args={[greenhouseShape, greenhouseExtrudeSettings]} />
-          <meshPhysicalMaterial
-            color="#020617"
-            metalness={0.25}
-            roughness={0.08}
-            transmission={0.92}
-            transparent
-            thickness={0.7}
-            ior={1.5}
-            envMapIntensity={2.2}
-          />
-        </mesh>
+      <RoundedBox args={[1.42, 0.055, 1.18]} radius={0.055} smoothness={5} position={[0, 1.57, -0.22]}>
+        <meshPhysicalMaterial color="#020617" metalness={0.1} roughness={0.42} clearcoat={0.7} envMapIntensity={0.38} />
+      </RoundedBox>
 
-        {/* Hood highlight / front sculpting */}
-        <mesh position={[1.65, 0.9, 0]} rotation={[0, 0, -0.04]}>
-          <boxGeometry args={[1.4, 0.02, 1.42]} />
-          <meshPhysicalMaterial color="#ffffff" transparent opacity={0.08} metalness={0.4} roughness={0.12} />
-        </mesh>
+      <BodyPanel
+        color="#08111f"
+        points={[
+          [-0.62, 0.92, 0.82],
+          [-0.42, 1.42, 0.28],
+          [0.42, 1.42, 0.28],
+          [0.62, 0.92, 0.82],
+        ]}
+      />
+      <BodyPanel
+        color="#08111f"
+        points={[
+          [-0.62, 0.93, -1.18],
+          [-0.48, 1.34, -0.84],
+          [0.48, 1.34, -0.84],
+          [0.62, 0.93, -1.18],
+        ]}
+        opacity={0.82}
+      />
 
-        {/* Windshield */}
-        <mesh position={[0.62, 1.06, 0]} rotation={[0, Math.PI / 2, -0.38]}>
-          <planeGeometry args={[1.42, 0.7]} />
-          <meshPhysicalMaterial
-            color="#07111f"
-            transmission={0.95}
-            transparent
-            opacity={0.98}
-            roughness={0.05}
-            metalness={0.05}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-
-        {/* Rear glass */}
-        <mesh position={[-1.46, 1.02, 0]} rotation={[0, -Math.PI / 2, 0.28]}>
-          <planeGeometry args={[1.08, 0.62]} />
-          <meshPhysicalMaterial
-            color="#07111f"
-            transmission={0.95}
-            transparent
-            opacity={0.98}
-            roughness={0.05}
-            metalness={0.05}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-
-        {/* Panoramic roof */}
-        <mesh position={[-0.34, 1.36, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[1.82, 1.34]} />
-          <meshPhysicalMaterial
-            color="#020617"
-            transmission={0.9}
-            transparent
-            opacity={0.95}
-            roughness={0.05}
-            metalness={0.15}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-
-        {/* Side windows */}
-        {[0.79, -0.79].map((z, idx) => (
-          <React.Fragment key={idx}>
-            <mesh position={[0.1, 1.14, z]}>
-              <boxGeometry args={[1.68, 0.52, 0.02]} />
-              <meshPhysicalMaterial color="#07111f" transmission={0.88} transparent opacity={0.92} roughness={0.06} />
-            </mesh>
-            <mesh position={[-1.28, 1.08, z]} rotation={[0, 0, 0.02]}>
-              <boxGeometry args={[0.75, 0.42, 0.02]} />
-              <meshPhysicalMaterial color="#07111f" transmission={0.88} transparent opacity={0.92} roughness={0.06} />
-            </mesh>
-          </React.Fragment>
-        ))}
-
-        {/* Frunk shut line */}
-        <mesh position={[1.62, 0.95, 0]}>
-          <boxGeometry args={[0.03, 0.02, 1.5]} />
-          <meshStandardMaterial color="#64748b" roughness={0.8} />
-        </mesh>
-
-        {/* Door handles */}
-        {[0.83, -0.83].map((z, idx) => (
-          <React.Fragment key={idx}>
-            <mesh position={[0.12, 0.88, z]}>
-              <boxGeometry args={[0.18, 0.025, 0.02]} />
-              <meshPhysicalMaterial color="#dbe4f0" metalness={0.85} roughness={0.18} />
-            </mesh>
-            <mesh position={[-0.72, 0.88, z]}>
-              <boxGeometry args={[0.18, 0.025, 0.02]} />
-              <meshPhysicalMaterial color="#dbe4f0" metalness={0.85} roughness={0.18} />
-            </mesh>
-          </React.Fragment>
-        ))}
-
-        {/* B-pillars */}
-        {[0.77, -0.77].map((z, idx) => (
-          <mesh key={idx} position={[-0.34, 1.11, z]}>
-            <boxGeometry args={[0.05, 0.5, 0.02]} />
-            <meshStandardMaterial color="#020617" roughness={0.35} metalness={0.2} />
+      {/* Body-colored pillars make the glasshouse read like a real cabin instead of one dark block. */}
+      {[-0.74, 0.74].map((x) => (
+        <React.Fragment key={`pillar-${x}`}>
+          <mesh position={[x, 1.2, 0.5]} rotation={[0.24, 0, 0]}>
+            <boxGeometry args={[0.075, 0.62, 0.06]} />
+            <meshPhysicalMaterial {...bodyMaterialProps} />
           </mesh>
-        ))}
+          <mesh position={[x, 1.2, -0.28]}>
+            <boxGeometry args={[0.075, 0.66, 0.06]} />
+            <meshPhysicalMaterial {...bodyMaterialProps} />
+          </mesh>
+          <mesh position={[x, 1.18, -0.98]} rotation={[-0.18, 0, 0]}>
+            <boxGeometry args={[0.075, 0.6, 0.06]} />
+            <meshPhysicalMaterial {...bodyMaterialProps} />
+          </mesh>
+        </React.Fragment>
+      ))}
 
-        {/* Side mirrors */}
-        {[0.95, -0.95].map((z, idx) => (
-          <group key={idx} position={[0.74, 0.98, z]}>
-            <mesh rotation={[0, z > 0 ? 0.12 : -0.12, 0]} castShadow>
-              <boxGeometry args={[0.08, 0.08, 0.16]} />
-              {bodyMaterial}
+      {/* Side glass, handles, and door cuts */}
+      {[-1, 1].map((side) => (
+        <group key={`side-${side}`}>
+          <BodyPanel
+            color="#07111f"
+            points={[
+              [side * 0.9, 1.02, 0.68],
+              [side * 0.73, 1.43, 0.18],
+              [side * 0.75, 1.46, -0.26],
+              [side * 0.91, 1.04, -0.28],
+            ]}
+          />
+          <BodyPanel
+            color="#07111f"
+            points={[
+              [side * 0.91, 1.03, -0.36],
+              [side * 0.75, 1.45, -0.34],
+              [side * 0.68, 1.28, -1.06],
+              [side * 0.86, 0.95, -1.1],
+            ]}
+            opacity={0.84}
+          />
+          {[-0.2, 0.62].map((z) => (
+            <mesh key={`handle-${side}-${z}`} position={[side * 1.1, 0.88, z]}>
+              <boxGeometry args={[0.035, 0.035, 0.24]} />
+              <meshPhysicalMaterial color="#e5edf7" metalness={0.8} roughness={0.16} />
             </mesh>
-            <mesh position={[0.03, -0.08, 0]} rotation={[0, 0, z > 0 ? -0.18 : 0.18]}>
-              <boxGeometry args={[0.03, 0.1, 0.03]} />
+          ))}
+          {[-0.55, 0.42].map((z) => (
+            <mesh key={`door-${side}-${z}`} position={[side * 1.101, 0.72, z]}>
+              <boxGeometry args={[0.018, 0.62, 0.018]} />
+              <meshStandardMaterial color="#334155" roughness={0.75} />
+            </mesh>
+          ))}
+          <mesh position={[side * 1.08, 0.2, 0]}>
+            <boxGeometry args={[0.06, 0.14, 4.1]} />
+            <meshStandardMaterial color="#020617" roughness={0.9} />
+          </mesh>
+          <group position={[side * 1.07, 1.02, 0.82]}>
+            <RoundedBox args={[0.12, 0.1, 0.24]} radius={0.035} smoothness={4} castShadow>
+              <meshPhysicalMaterial {...bodyMaterialProps} />
+            </RoundedBox>
+            <mesh position={[side * 0.03, -0.07, 0]} rotation={[0, 0, side > 0 ? -0.22 : 0.22]}>
+              <boxGeometry args={[0.035, 0.12, 0.035]} />
               <meshStandardMaterial color="#111827" roughness={0.65} />
             </mesh>
           </group>
-        ))}
-
-        {/* Front fascia / EV nose */}
-        <mesh position={[2.48, 0.56, 0]}>
-          <boxGeometry args={[0.04, 0.24, 1.48]} />
-          <meshStandardMaterial color="#101826" roughness={0.5} metalness={0.2} />
-        </mesh>
-        <mesh position={[2.42, 0.28, 0]}>
-          <boxGeometry args={[0.03, 0.12, 1.05]} />
-          <meshStandardMaterial color="#060b13" roughness={0.95} />
-        </mesh>
-
-        {/* Slim Tesla-like headlights */}
-        <mesh position={[2.38, 0.73, 0.63]} rotation={[0, 0.12, -0.1]}>
-          <boxGeometry args={[0.04, 0.08, 0.46]} />
-          <meshBasicMaterial color="#e2f3ff" toneMapped={false} />
-          <pointLight color="#ffffff" intensity={0.8} distance={3.5} />
-        </mesh>
-        <mesh position={[2.38, 0.73, -0.63]} rotation={[0, -0.12, -0.1]}>
-          <boxGeometry args={[0.04, 0.08, 0.46]} />
-          <meshBasicMaterial color="#e2f3ff" toneMapped={false} />
-          <pointLight color="#ffffff" intensity={0.8} distance={3.5} />
-        </mesh>
-
-        {/* Rear light bar */}
-        <mesh position={[-2.42, 0.86, 0]}>
-          <boxGeometry args={[0.04, 0.06, 1.5]} />
-          <meshBasicMaterial color="#ff304f" toneMapped={false} />
-          <pointLight color="#ff304f" intensity={0.75} distance={3.2} />
-        </mesh>
-
-        {/* Lower black rocker */}
-        {[0.86, -0.86].map((z, idx) => (
-          <mesh key={idx} position={[0, 0.2, z]}>
-            <boxGeometry args={[4.35, 0.12, 0.04]} />
-            <meshStandardMaterial color="#020617" roughness={0.95} />
-          </mesh>
-        ))}
-
-        {/* Rear diffuser */}
-        <mesh position={[-2.32, 0.18, 0]}>
-          <boxGeometry args={[0.05, 0.12, 1.32]} />
-          <meshStandardMaterial color="#040812" roughness={0.95} />
-        </mesh>
-      </group>
-
-      {/* World-space wheel arch shoulders */}
-      {wheelPositions.map((pos, i) => (
-        <FenderBulge key={`fender-${i}`} position={[pos[0], pos[1] + 0.25, pos[2]]} color={color} />
+        </group>
       ))}
 
-      {/* Side character lines */}
+      {/* Front bumper, grille, lights, and plate */}
+      <RoundedBox args={[1.78, 0.34, 0.22]} radius={0.08} smoothness={6} position={[0, 0.47, 2.32]} castShadow>
+        <meshPhysicalMaterial {...bodyMaterialProps} />
+      </RoundedBox>
+      <mesh position={[0, 0.46, 2.445]}>
+        <boxGeometry args={[1.26, 0.2, 0.035]} />
+        <meshStandardMaterial color="#030712" roughness={0.7} metalness={0.25} />
+      </mesh>
+      <mesh position={[0, 0.67, 2.455]}>
+        <boxGeometry args={[0.56, 0.13, 0.025]} />
+        <meshStandardMaterial color="#e5e7eb" roughness={0.38} metalness={0.25} />
+      </mesh>
+      {[-0.56, 0.56].map((x) => (
+        <mesh key={`headlight-${x}`} position={[x, 0.77, 2.46]} rotation={[0, x > 0 ? -0.08 : 0.08, 0]}>
+          <boxGeometry args={[0.52, 0.075, 0.035]} />
+          <meshBasicMaterial color="#c8f3ff" toneMapped={false} />
+          <pointLight color="#c8f3ff" intensity={0.22} distance={2.5} />
+        </mesh>
+      ))}
+      {[-0.74, 0.74].map((x) => (
+        <mesh key={`fog-${x}`} position={[x, 0.37, 2.46]}>
+          <boxGeometry args={[0.22, 0.06, 0.03]} />
+          <meshBasicMaterial color="#f8fafc" toneMapped={false} />
+        </mesh>
+      ))}
+
+      {/* Rear hatch, tail lamps, and diffuser */}
+      <RoundedBox args={[1.82, 0.36, 0.18]} radius={0.08} smoothness={6} position={[0, 0.54, -2.28]} castShadow>
+        <meshPhysicalMaterial {...bodyMaterialProps} />
+      </RoundedBox>
+      <mesh position={[0, 0.82, -2.395]}>
+        <boxGeometry args={[1.54, 0.065, 0.035]} />
+        <meshBasicMaterial color="#ff2848" toneMapped={false} />
+        <pointLight color="#ff2848" intensity={0.2} distance={2.4} />
+      </mesh>
+      <mesh position={[0, 0.56, -2.405]}>
+        <boxGeometry args={[0.58, 0.13, 0.025]} />
+        <meshStandardMaterial color="#e5e7eb" roughness={0.4} metalness={0.22} />
+      </mesh>
+      <mesh position={[0, 0.24, -2.35]}>
+        <boxGeometry args={[1.5, 0.14, 0.08]} />
+        <meshStandardMaterial color="#020617" roughness={0.92} />
+      </mesh>
+
+      {/* Wheel wells sit in front of the body side, hiding the rectangular body behind the tires. */}
+      {wheelPositions.map(({ position, side }, i) => (
+        <WheelWell key={`well-${i}`} position={[side * 1.085, position[1], position[2]]} side={side} />
+      ))}
+
+      {/* Hood creases and side character lines */}
       <Line
         points={[
-          [-1.95, 1.02, 0.84],
-          [-1.2, 1.09, 0.84],
-          [0.25, 1.09, 0.84],
-          [1.72, 0.93, 0.84],
+          [-0.62, 0.99, 0.72],
+          [-0.4, 0.94, 1.44],
+          [-0.32, 0.83, 2.08],
+        ]}
+        color="#ffffff"
+        lineWidth={0.55}
+        transparent
+        opacity={0.25}
+      />
+      <Line
+        points={[
+          [0.62, 0.99, 0.72],
+          [0.4, 0.94, 1.44],
+          [0.32, 0.83, 2.08],
+        ]}
+        color="#ffffff"
+        lineWidth={0.55}
+        transparent
+        opacity={0.25}
+      />
+      <Line
+        points={[
+          [-1.05, 0.88, -1.98],
+          [-1.08, 0.94, -0.9],
+          [-1.08, 0.9, 0.6],
+          [-1.0, 0.78, 1.86],
         ]}
         color="#ffffff"
         lineWidth={0.6}
@@ -488,10 +631,10 @@ const PremiumTeslaEV = ({ color = '#f3f6fb' }: { color?: string }) => {
       />
       <Line
         points={[
-          [-1.95, 1.02, -0.84],
-          [-1.2, 1.09, -0.84],
-          [0.25, 1.09, -0.84],
-          [1.72, 0.93, -0.84],
+          [1.05, 0.88, -1.98],
+          [1.08, 0.94, -0.9],
+          [1.08, 0.9, 0.6],
+          [1.0, 0.78, 1.86],
         ]}
         color="#ffffff"
         lineWidth={0.6}
@@ -502,12 +645,10 @@ const PremiumTeslaEV = ({ color = '#f3f6fb' }: { color?: string }) => {
       {/* Window trim */}
       <Line
         points={[
-          [0.92, 0.94, 0.83],
-          [0.6, 1.22, 0.83],
-          [0.12, 1.42, 0.83],
-          [-0.72, 1.42, 0.83],
-          [-1.5, 1.25, 0.83],
-          [-1.95, 0.96, 0.83],
+          [0.86, 0.96, 0.72],
+          [0.86, 1.28, 0.34],
+          [0.86, 1.46, -0.28],
+          [0.86, 1.34, -0.96],
         ]}
         color="#e2e8f0"
         lineWidth={0.75}
@@ -516,12 +657,10 @@ const PremiumTeslaEV = ({ color = '#f3f6fb' }: { color?: string }) => {
       />
       <Line
         points={[
-          [0.92, 0.94, -0.83],
-          [0.6, 1.22, -0.83],
-          [0.12, 1.42, -0.83],
-          [-0.72, 1.42, -0.83],
-          [-1.5, 1.25, -0.83],
-          [-1.95, 0.96, -0.83],
+          [-0.86, 0.96, 0.72],
+          [-0.86, 1.28, 0.34],
+          [-0.86, 1.46, -0.28],
+          [-0.86, 1.34, -0.96],
         ]}
         color="#e2e8f0"
         lineWidth={0.75}
@@ -529,8 +668,8 @@ const PremiumTeslaEV = ({ color = '#f3f6fb' }: { color?: string }) => {
         opacity={0.35}
       />
 
-      {wheelPositions.map((pos, i) => (
-        <AeroWheel key={i} position={pos} />
+      {wheelPositions.map(({ position, side }, i) => (
+        <AeroWheel key={i} position={position} side={side} />
       ))}
     </group>
   );
@@ -655,7 +794,7 @@ export const Incident3DView: React.FC<Incident3DViewProps> = ({ telemetry, passe
         <ambientLight intensity={0.2} />
         <directionalLight
           position={[5, 10, 5]}
-          intensity={1.5}
+          intensity={1.2}
           castShadow
           shadow-mapSize-width={2048}
           shadow-mapSize-height={2048}
@@ -683,7 +822,7 @@ export const Incident3DView: React.FC<Incident3DViewProps> = ({ telemetry, passe
         <Environment preset="city" />
 
         <EffectComposer>
-          <Bloom luminanceThreshold={1} mipmapBlur intensity={1.5} />
+          <Bloom luminanceThreshold={1.08} mipmapBlur intensity={0.68} />
           <ChromaticAberration offset={new THREE.Vector2(0.002, 0.002)} />
           <Vignette eskil={false} offset={0.1} darkness={1.1} />
         </EffectComposer>

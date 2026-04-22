@@ -200,7 +200,7 @@ export default function VehicleRegistry() {
               <div className="text-xs text-slate-500 dark:text-slate-400">
                 <span className="font-semibold text-slate-700 dark:text-slate-300">{vehicle.incidentCount}</span> Incidents
               </div>
-              <div className="flex gap-3">
+              <div className="flex flex-wrap justify-end gap-3">
                 {vehicle.status === 'In Alert' && (
                   <button 
                     onClick={() => navigate('/alerts')}
@@ -209,6 +209,13 @@ export default function VehicleRegistry() {
                     Open Incident
                   </button>
                 )}
+                <button
+                  onClick={() => navigate(`/digital-twin?vehicle=${encodeURIComponent(vehicle.vehicleId)}`)}
+                  className="text-sm font-medium text-cyan-700 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-300 flex items-center gap-1"
+                >
+                  <Activity className="w-3.5 h-3.5" />
+                  Digital Twin
+                </button>
                 <button 
                   onClick={() => setSelectedVehicle(vehicle)}
                   className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 flex items-center gap-1"
@@ -374,17 +381,24 @@ export default function VehicleRegistry() {
 
             </div>
             
-            <div className="p-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex gap-3">
+            <div className="p-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex flex-wrap gap-3">
               <button 
                 onClick={() => navigate('/history')}
-                className="flex-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 py-2.5 rounded-lg font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                className="flex-1 min-w-36 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 py-2.5 rounded-lg font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
               >
                 View Full History
+              </button>
+              <button
+                onClick={() => navigate(`/digital-twin?vehicle=${encodeURIComponent(selectedVehicle.vehicleId)}`)}
+                className="flex-1 min-w-36 bg-cyan-600 hover:bg-cyan-700 text-white py-2.5 rounded-lg font-medium transition-colors shadow-sm flex items-center justify-center gap-2"
+              >
+                <Activity className="w-4 h-4" />
+                Digital Twin
               </button>
               {selectedVehicle.status === 'In Alert' && (
                 <button 
                   onClick={() => navigate('/alerts')}
-                  className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-lg font-medium transition-colors shadow-sm"
+                  className="flex-1 min-w-36 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-lg font-medium transition-colors shadow-sm"
                 >
                   Open Incident
                 </button>
