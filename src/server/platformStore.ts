@@ -166,7 +166,7 @@ export class PlatformStore {
     );
   }
 
-  createIncident(data: Partial<Incident>) {
+  createIncident(data: Partial<Incident>, actor = 'System') {
     const timestamp = nowIso();
     const incidentId = data.incidentId || this.nextIncidentId();
     const incident: Incident = {
@@ -194,7 +194,7 @@ export class PlatformStore {
     };
 
     this.upsertIncident(incident);
-    this.createAuditEvent('System', 'incident.created', 'incident', incident.incidentId, {
+    this.createAuditEvent(actor, 'incident.created', 'incident', incident.incidentId, {
       severity: incident.severity,
       triggerType: incident.triggerType,
       vehicleId: incident.vehicleId,
@@ -207,6 +207,7 @@ export class PlatformStore {
     if (!incident) return null;
 
     const actor = operator || 'System';
+    const isNoteOnly = incident.status === status;
     const updated: Incident = {
       ...incident,
       status,
@@ -218,13 +219,15 @@ export class PlatformStore {
         ...incident.actionLogs,
         {
           timestamp: nowIso(),
-          action: `${actor}: Status updated to ${status}.${note ? ` Note: ${note}` : ''}`,
+          action: isNoteOnly
+            ? `${actor}: Added note.${note ? ` Note: ${note}` : ''}`
+            : `${actor}: Status updated from ${incident.status} to ${status}.${note ? ` Note: ${note}` : ''}`,
         },
       ],
     };
 
     this.upsertIncident(updated);
-    this.createAuditEvent(actor, 'incident.status_updated', 'incident', incidentId, {
+    this.createAuditEvent(actor, isNoteOnly ? 'incident.note_added' : 'incident.status_updated', 'incident', incidentId, {
       previousStatus: incident.status,
       status,
       note: note || null,
@@ -251,7 +254,7 @@ export class PlatformStore {
     return rows.map((row) => JSON.parse(row.payload) as Operator);
   }
 
-  createOperator(data: Partial<Operator>) {
+  createOperator(data: Partial<Operator>, actor = 'System') {
     const operator: Operator = {
       id: data.id || this.nextOperatorId(),
       name: data.name || 'New Operator',
@@ -272,31 +275,31 @@ export class PlatformStore {
     };
 
     this.upsertOperator(operator);
-    this.createAuditEvent('System', 'operator.created', 'operator', operator.id, {
+    this.createAuditEvent(actor, 'operator.created', 'operator', operator.id, {
       role: operator.role,
       assignedRegion: operator.assignedRegion,
     });
     return operator;
   }
 
-  updateOperator(operatorId: string, data: Partial<Operator>) {
+  updateOperator(operatorId: string, data: Partial<Operator>, actor = 'System') {
     const operator = this.getOperator(operatorId);
     if (!operator) return null;
 
     const updated = { ...operator, ...data, id: operatorId };
     this.upsertOperator(updated);
-    this.createAuditEvent('System', 'operator.updated', 'operator', operatorId, {
+    this.createAuditEvent(actor, 'operator.updated', 'operator', operatorId, {
       fields: Object.keys(data),
     });
     return updated;
   }
 
-  deleteOperator(operatorId: string) {
+  deleteOperator(operatorId: string, actor = 'System') {
     const operator = this.getOperator(operatorId);
     if (!operator) return false;
 
     this.db.prepare('DELETE FROM operators WHERE operator_id = ?').run(operatorId);
-    this.createAuditEvent('System', 'operator.deleted', 'operator', operatorId, {
+    this.createAuditEvent(actor, 'operator.deleted', 'operator', operatorId, {
       name: operator.name,
     });
     return true;

@@ -1,10 +1,11 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
 import { api } from '../services/api';
-import { Incident, Hospital, SOP } from '../types';
+import { AppOutletContext, Incident, Hospital, SOP } from '../types';
 import { format } from 'date-fns';
 import { ArrowLeft, Clock, MapPin, Car, User, FileText, Activity, Send, AlertCircle, History, Stethoscope, Sparkles, ChevronRight } from 'lucide-react';
 import { mockSOPs } from '../data/mockSOPs';
+import { getAllowedIncidentStatuses, INCIDENT_STATUSES } from '../utils/permissions';
 
 const IncidentMap = lazy(() => import('../components/IncidentMap'));
 const Incident3DView = lazy(() =>
@@ -12,16 +13,6 @@ const Incident3DView = lazy(() =>
     default: module.Incident3DView,
   })),
 );
-
-const STATUS_OPTIONS = [
-  'New Alert',
-  'Acknowledged',
-  'Verifying',
-  'Dispatching',
-  'Responders En Route',
-  'Resolved',
-  'Closed'
-];
 
 // Haversine formula to calculate distance between two lat/lon points in km
 function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -47,11 +38,13 @@ function HeavyPanelFallback({ label }: { label: string }) {
 export default function IncidentDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useOutletContext<AppOutletContext>();
   const [incident, setIncident] = useState<Incident | null>(null);
   const [nearestHospital, setNearestHospital] = useState<{hospital: Hospital, distance: number} | null>(null);
   const [loading, setLoading] = useState(true);
   const [note, setNote] = useState('');
   const [updating, setUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState('');
   const [recommendedSOP, setRecommendedSOP] = useState<SOP | null>(null);
 
   useEffect(() => {
@@ -124,15 +117,17 @@ export default function IncidentDetail() {
     }
   };
 
-  const handleStatusUpdate = async (newStatus: string) => {
+  const handleStatusUpdate = async (newStatus: Incident['status']) => {
     if (!incident) return;
     setUpdating(true);
+    setUpdateError('');
     try {
-      const updated = await api.updateIncidentStatus(incident.incidentId, newStatus, 'Op-Jane', note);
+      const updated = await api.updateIncidentStatus(incident.incidentId, newStatus, user.name, note);
       setIncident(updated);
       setNote('');
     } catch (error) {
       console.error('Failed to update status', error);
+      setUpdateError(error instanceof Error ? error.message : 'Failed to update incident status');
     } finally {
       setUpdating(false);
     }
@@ -140,6 +135,8 @@ export default function IncidentDetail() {
 
   if (loading) return <div className="p-8 text-slate-500 dark:text-slate-400">Loading incident details...</div>;
   if (!incident) return <div className="p-8 text-red-500 dark:text-red-400">Incident not found.</div>;
+
+  const allowedNextStatuses = getAllowedIncidentStatuses(user, incident.status);
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -373,21 +370,46 @@ export default function IncidentDetail() {
 
           {/* Action Workflow */}
           <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-6">
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Update Status</h3>
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Incident Workflow</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  Signed in as {user.role}. Available next actions are based on role and current status.
+                </p>
+              </div>
+              {allowedNextStatuses.length > 0 && (
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#005691] dark:text-blue-400">
+                  Next: {allowedNextStatuses.join(' / ')}
+                </span>
+              )}
+            </div>
+            {updateError && (
+              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
+                {updateError}
+              </div>
+            )}
             <div className="flex flex-wrap gap-2 mb-6">
-              {STATUS_OPTIONS.map((status) => (
-                <button
-                  key={status}
-                  onClick={() => handleStatusUpdate(status)}
-                  disabled={updating || incident.status === status}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
-                    ${incident.status === status 
-                      ? 'bg-slate-800 text-white dark:bg-slate-700 cursor-default' 
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 disabled:opacity-50'}`}
-                >
-                  {status}
-                </button>
-              ))}
+              {INCIDENT_STATUSES.map((status) => {
+                const isCurrent = incident.status === status;
+                const isAllowed = allowedNextStatuses.includes(status);
+
+                return (
+                  <button
+                    key={status}
+                    onClick={() => handleStatusUpdate(status)}
+                    disabled={updating || isCurrent || !isAllowed}
+                    title={!isCurrent && !isAllowed ? `Your role cannot move this incident to ${status} from ${incident.status}` : undefined}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                      ${isCurrent
+                        ? 'bg-slate-800 text-white dark:bg-slate-700 cursor-default'
+                        : isAllowed
+                          ? 'bg-blue-50 text-[#005691] hover:bg-blue-100 dark:bg-blue-900/20 dark:text-blue-300 dark:hover:bg-blue-900/40'
+                          : 'bg-slate-100 text-slate-400 dark:bg-slate-800/70 dark:text-slate-500 cursor-not-allowed'}`}
+                  >
+                    {status}
+                  </button>
+                );
+              })}
             </div>
             
             <div className="space-y-3">

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, User, Key, Bell, Globe, Save } from 'lucide-react';
 import { useLanguage, Language } from '../contexts/LanguageContext';
+import type { AuthUser } from '../types';
 
 type Tab = 'profile' | 'password' | 'notifications' | 'theme';
 
@@ -8,9 +9,10 @@ interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialTab?: Tab;
+  user?: AuthUser;
 }
 
-export default function SettingsModal({ isOpen, onClose, initialTab = 'profile' }: SettingsModalProps) {
+export default function SettingsModal({ isOpen, onClose, initialTab = 'profile', user }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const { language, setLanguage, t } = useLanguage();
 
@@ -20,14 +22,23 @@ export default function SettingsModal({ isOpen, onClose, initialTab = 'profile' 
     }
   }, [isOpen, initialTab]);
   
-  // Mock state for forms
   const [profileData, setProfileData] = useState({
-    name: 'Jane Doe',
-    email: 'jane.doe@bosch.com',
+    name: user?.name || 'Operator',
+    email: user?.email || 'operator@bosch.com',
     phone: '+60 12 345 1111',
     region: 'North District',
     shift: 'Morning Shift (08:00 - 16:00)'
   });
+
+  React.useEffect(() => {
+    if (user) {
+      setProfileData((current) => ({
+        ...current,
+        name: user.name,
+        email: user.email,
+      }));
+    }
+  }, [user]);
 
   const [notifications, setNotifications] = useState({
     incidentAlerts: true,

@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
-import { Operator } from '../types';
+import { AppOutletContext, Operator } from '../types';
 import { 
   UserPlus, Edit2, Trash2, Phone, Clock, Shield, Search, 
   Filter, Eye, UserX, MapPin, Activity, CheckCircle2, 
   AlertCircle, XCircle, Coffee, Users, BarChart2, ChevronRight, X
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useOutletContext } from 'react-router-dom';
+import { canCreateOperators, canDeleteOperators, canManageOperators } from '../utils/permissions';
 
 export default function OperatorManagement() {
+  const { user } = useOutletContext<AppOutletContext>();
   const [operators, setOperators] = useState<Operator[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -20,6 +22,7 @@ export default function OperatorManagement() {
   
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedOperator, setSelectedOperator] = useState<Operator | null>(null);
+  const [error, setError] = useState('');
   
   const [formData, setFormData] = useState<Partial<Operator>>({
     name: '',
@@ -39,11 +42,20 @@ export default function OperatorManagement() {
   }, []);
 
   const fetchOperators = async () => {
-    const data = await api.getOperators();
-    setOperators(data);
+    try {
+      const data = await api.getOperators();
+      setOperators(data);
+    } catch (fetchError) {
+      setError(fetchError instanceof Error ? fetchError.message : 'Failed to load operators');
+    }
   };
 
   const handleOpenModal = (operator?: Operator) => {
+    if ((operator && !canManageOperators(user)) || (!operator && !canCreateOperators(user))) {
+      setError('Your role can view operators but cannot change this record.');
+      return;
+    }
+
     if (operator) {
       setEditingOperator(operator);
       setFormData(operator);
@@ -77,27 +89,47 @@ export default function OperatorManagement() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingOperator) {
-      await api.updateOperator(editingOperator.id, formData);
-    } else {
-      await api.createOperator({
-        ...formData,
-        activeIncidents: 0,
-        activeIncidentIds: [],
-        todayHandledCases: 0,
-        lastActiveTime: new Date().toISOString(),
-        averageResponseTime: '0s'
-      });
+    setError('');
+    try {
+      if (editingOperator) {
+        if (!canManageOperators(user)) {
+          throw new Error('Your role cannot edit operators.');
+        }
+        await api.updateOperator(editingOperator.id, formData);
+      } else {
+        if (!canCreateOperators(user)) {
+          throw new Error('Only admins can add operators.');
+        }
+        await api.createOperator({
+          ...formData,
+          activeIncidents: 0,
+          activeIncidentIds: [],
+          todayHandledCases: 0,
+          lastActiveTime: new Date().toISOString(),
+          averageResponseTime: '0s'
+        });
+      }
+      fetchOperators();
+      handleCloseModal();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Operator update failed');
     }
-    fetchOperators();
-    handleCloseModal();
   };
 
   const handleDelete = async (id: string) => {
+    if (!canDeleteOperators(user)) {
+      setError('Only admins can deactivate operators.');
+      return;
+    }
+
     if (window.confirm('Are you sure you want to deactivate this operator?')) {
-      await api.deleteOperator(id);
-      fetchOperators();
-      if (selectedOperator?.id === id) setIsDrawerOpen(false);
+      try {
+        await api.deleteOperator(id);
+        fetchOperators();
+        if (selectedOperator?.id === id) setIsDrawerOpen(false);
+      } catch (deleteError) {
+        setError(deleteError instanceof Error ? deleteError.message : 'Operator delete failed');
+      }
     }
   };
 
@@ -142,16 +174,30 @@ export default function OperatorManagement() {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Operator Management</h2>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Manage dispatchers and call takers</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">
+            {canManageOperators(user) ? 'Manage dispatchers and call takers' : 'View dispatcher and call taker availability'}
+          </p>
         </div>
-        <button 
-          onClick={() => handleOpenModal()}
-          className="flex items-center gap-2 px-4 py-2 bg-[#005691] hover:bg-blue-800 text-white rounded-lg font-medium transition-colors shadow-sm"
-        >
-          <UserPlus className="w-4 h-4" />
-          Add Operator
-        </button>
+        {canCreateOperators(user) ? (
+          <button
+            onClick={() => handleOpenModal()}
+            className="flex items-center gap-2 px-4 py-2 bg-[#005691] hover:bg-blue-800 text-white rounded-lg font-medium transition-colors shadow-sm"
+          >
+            <UserPlus className="w-4 h-4" />
+            Add Operator
+          </button>
+        ) : (
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+            {user.role} access
+          </div>
+        )}
       </div>
+
+      {error && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+          {error}
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -346,20 +392,24 @@ export default function OperatorManagement() {
                         >
                           <Eye className="w-4 h-4" />
                         </button>
-                        <button 
-                          onClick={() => handleOpenModal(operator)}
-                          className="p-2 text-slate-400 hover:text-[#005691] dark:hover:text-blue-400 transition-colors rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20"
-                          title="Edit Profile"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => handleDelete(operator.id)}
-                          className="p-2 text-slate-400 hover:text-[#E20015] dark:hover:text-red-400 transition-colors rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
-                          title="Deactivate Operator"
-                        >
-                          <UserX className="w-4 h-4" />
-                        </button>
+                        {canManageOperators(user) && (
+                          <button
+                            onClick={() => handleOpenModal(operator)}
+                            className="p-2 text-slate-400 hover:text-[#005691] dark:hover:text-blue-400 transition-colors rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                            title="Edit Profile"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        )}
+                        {canDeleteOperators(user) && (
+                          <button
+                            onClick={() => handleDelete(operator.id)}
+                            className="p-2 text-slate-400 hover:text-[#E20015] dark:hover:text-red-400 transition-colors rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
+                            title="Deactivate Operator"
+                          >
+                            <UserX className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -495,16 +545,22 @@ export default function OperatorManagement() {
             </div>
             
             <div className="p-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
-              <button 
-                onClick={() => {
-                  setIsDrawerOpen(false);
-                  handleOpenModal(selectedOperator);
-                }}
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors flex items-center justify-center gap-2 shadow-sm"
-              >
-                <Edit2 className="w-4 h-4" />
-                Edit Profile
-              </button>
+              {canManageOperators(user) ? (
+                <button
+                  onClick={() => {
+                    setIsDrawerOpen(false);
+                    handleOpenModal(selectedOperator);
+                  }}
+                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <Edit2 className="w-4 h-4" />
+                  Edit Profile
+                </button>
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-center text-sm font-medium text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+                  View-only access for {user.role}
+                </div>
+              )}
             </div>
           </div>
         </>

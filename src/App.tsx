@@ -21,6 +21,7 @@ const IncidentHistory = lazy(() => import('./pages/IncidentHistory'));
 const Analytics = lazy(() => import('./pages/Analytics'));
 const Simulator = lazy(() => import('./pages/Simulator'));
 const OperatorManagement = lazy(() => import('./pages/OperatorManagement'));
+const AdminConsole = lazy(() => import('./pages/AdminConsole'));
 const Profile = lazy(() => import('./pages/Profile'));
 const SOPCenter = lazy(() => import('./pages/SOPCenter'));
 
@@ -84,8 +85,9 @@ export default function App() {
               <Route path="vehicles" element={<VehicleRegistry />} />
               <Route path="digital-twin" element={<DigitalTwin />} />
               <Route path="operators" element={<OperatorManagement />} />
+              <Route path="admin" element={<AdminConsole />} />
               <Route path="sop" element={<SOPCenter />} />
-              <Route path="profile" element={<Profile />} />
+              <Route path="profile" element={<Profile user={currentUser} onLogout={handleLogout} />} />
               <Route path="history" element={<IncidentHistory />} />
               <Route path="analytics" element={<Analytics />} />
               <Route path="simulator" element={<Simulator />} />

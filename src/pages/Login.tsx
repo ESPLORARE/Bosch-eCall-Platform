@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldCheck, User, KeyRound } from 'lucide-react';
 import BoschLogo from '../components/BoschLogo';
 import { api } from '../services/api';
+import type { AuthBootstrap } from '../types';
 
 interface LoginProps {
   onLogin: () => void;
@@ -19,6 +20,26 @@ function passwordScore(password: string) {
   ].filter(Boolean).length;
 }
 
+function friendlyAuthError(error: unknown) {
+  const message = error instanceof Error ? error.message : 'Authentication failed.';
+  if (message.includes('Backend API is not responding')) {
+    return '后端 API 没有响应。请停止旧服务后用 npm run dev 重新启动，不要只运行静态 preview。';
+  }
+  if (message.includes('organization invite code')) {
+    return '当前数据库已经有管理员账号，注册新账号需要填写组织邀请码 REGISTRATION_CODE。';
+  }
+  if (message.includes('Password must be')) {
+    return '密码至少 10 位，并且要包含大写字母、小写字母、数字和符号。';
+  }
+  if (message.includes('already exists')) {
+    return '这个邮箱已经注册过了，请直接登录。';
+  }
+  if (message.includes('Too many authentication attempts')) {
+    return '尝试次数太多，请稍后再试。';
+  }
+  return message;
+}
+
 export default function Login({ onLogin }: LoginProps) {
   const [mode, setMode] = useState<AuthMode>('login');
   const [name, setName] = useState('');
@@ -28,10 +49,33 @@ export default function Login({ onLogin }: LoginProps) {
   const [registrationCode, setRegistrationCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [setupWarning, setSetupWarning] = useState('');
+  const [authSetup, setAuthSetup] = useState<AuthBootstrap | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const score = useMemo(() => passwordScore(password), [password]);
   const isRegister = mode === 'register';
+
+  useEffect(() => {
+    let isMounted = true;
+    api
+      .getAuthBootstrap()
+      .then((setup) => {
+        if (isMounted) {
+          setAuthSetup(setup);
+          setSetupWarning('');
+        }
+      })
+      .catch((setupError) => {
+        if (isMounted) {
+          setSetupWarning(friendlyAuthError(setupError));
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const switchMode = (nextMode: AuthMode) => {
     setMode(nextMode);
@@ -45,7 +89,22 @@ export default function Login({ onLogin }: LoginProps) {
     setError('');
 
     if (isRegister && password !== confirmPassword) {
-      setError('Passwords do not match.');
+      setError('两次输入的密码不一致。');
+      return;
+    }
+
+    if (isRegister && score < 5) {
+      setError('密码至少 10 位，并且要包含大写字母、小写字母、数字和符号。');
+      return;
+    }
+
+    if (isRegister && authSetup && !authSetup.registrationEnabled) {
+      setError('当前系统已经有账号，但后端还没有配置 REGISTRATION_CODE，暂时不能开放新注册。');
+      return;
+    }
+
+    if (isRegister && authSetup?.registrationRequiresInvite && !registrationCode.trim()) {
+      setError('当前数据库已经有管理员账号，注册新账号需要填写组织邀请码。');
       return;
     }
 
@@ -58,7 +117,7 @@ export default function Login({ onLogin }: LoginProps) {
       }
       onLogin();
     } catch (authError) {
-      setError(authError instanceof Error ? authError.message : 'Authentication failed.');
+      setError(friendlyAuthError(authError));
     } finally {
       setIsSubmitting(false);
     }
@@ -138,9 +197,20 @@ export default function Login({ onLogin }: LoginProps) {
                     {isRegister ? 'Create operator account' : 'Secure sign in'}
                   </h2>
                   <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                    {isRegister ? 'The first account becomes an administrator.' : 'Use your operator email and password.'}
+                    {isRegister
+                      ? authSetup?.registrationRequiresInvite
+                        ? 'This workspace already has an admin. Enter the organization invite code.'
+                        : 'The first account becomes an administrator.'
+                      : 'Use your operator email and password.'}
                   </p>
                 </div>
+
+                {setupWarning && (
+                  <div className="mb-5 flex gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{setupWarning}</span>
+                  </div>
+                )}
 
                 {error && (
                   <div className="mb-5 flex gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
@@ -234,14 +304,16 @@ export default function Login({ onLogin }: LoginProps) {
                       </label>
 
                       <label className="block">
-                        <span className="mb-2 block text-sm font-semibold text-slate-700 dark:text-slate-200">Invite code</span>
+                        <span className="mb-2 block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                          Invite code {authSetup?.registrationRequiresInvite ? '' : '(optional)'}
+                        </span>
                         <div className="relative">
                           <KeyRound className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                           <input
                             value={registrationCode}
                             onChange={(event) => setRegistrationCode(event.target.value)}
                             className="w-full rounded-lg border border-slate-300 bg-white py-3 pl-10 pr-3 text-sm outline-none transition focus:border-[#005691] focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:focus:ring-blue-950"
-                            placeholder="Required after first admin"
+                            placeholder={authSetup?.registrationRequiresInvite ? 'Required for this workspace' : 'Required after first admin'}
                           />
                         </div>
                       </label>

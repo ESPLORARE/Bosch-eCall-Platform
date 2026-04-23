@@ -1,4 +1,4 @@
-import { Incident, Vehicle, AnalyticsData, Hospital, Weather, Operator, AuthResponse } from '../types';
+import { Incident, Vehicle, AnalyticsData, Hospital, Weather, Operator, AuthBootstrap, AuthResponse, AuditEvent } from '../types';
 import { mockPlatformApi } from '../data/mockPlatformData';
 import { generateAssistantFallback } from './assistantMock';
 
@@ -13,15 +13,27 @@ async function requestJson<T>(path: string, fallback: () => Promise<T>, init?: R
 
   try {
     const res = await fetch(path, { credentials: 'same-origin', ...init });
-    if (res.status === 401 || res.status === 403) {
-      throw new Error(`Request failed: ${res.status}`);
-    }
     if (!res.ok) {
-      throw new Error(`Request failed: ${res.status}`);
+      const contentType = res.headers.get('content-type') || '';
+      const errorData = contentType.includes('application/json') ? await res.json().catch(() => ({})) : {};
+      const message =
+        typeof errorData === 'object' && errorData && 'error' in errorData
+          ? String(errorData.error)
+          : `Request failed: ${res.status}`;
+      const error = new Error(message) as Error & { status?: number };
+      error.status = res.status;
+      throw error;
     }
     return (await res.json()) as T;
   } catch (error) {
-    if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
+    const status = error instanceof Error ? (error as Error & { status?: number }).status : undefined;
+    const method = init?.method?.toUpperCase() || 'GET';
+    if (
+      method !== 'GET' ||
+      status === 401 ||
+      status === 403 ||
+      (error instanceof Error && (error.message.includes('401') || error.message.includes('403')))
+    ) {
       throw error;
     }
     console.warn(`Falling back to mock API for ${path}`, error);
@@ -29,7 +41,26 @@ async function requestJson<T>(path: string, fallback: () => Promise<T>, init?: R
   }
 }
 
+async function readApiJson<T>(res: Response, fallbackMessage: string): Promise<T> {
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    await res.text().catch(() => '');
+    throw new Error('Backend API is not responding. Please restart with npm run dev instead of a static preview server.');
+  }
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message = typeof data === 'object' && data && 'error' in data ? String(data.error) : fallbackMessage;
+    throw new Error(message);
+  }
+  return data as T;
+}
+
 export const api = {
+  getAuthBootstrap: async (): Promise<AuthBootstrap> => {
+    const res = await fetch('/api/auth/bootstrap', { credentials: 'same-origin' });
+    return readApiJson<AuthBootstrap>(res, 'Could not load authentication setup');
+  },
   login: async (email: string, password: string): Promise<AuthResponse> => {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
@@ -38,11 +69,7 @@ export const api = {
       body: JSON.stringify({ email, password }),
     });
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(data.error || 'Login failed');
-    }
-    return data as AuthResponse;
+    return readApiJson<AuthResponse>(res, 'Login failed');
   },
   register: async (data: {
     name: string;
@@ -57,19 +84,11 @@ export const api = {
       body: JSON.stringify(data),
     });
 
-    const responseData = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(responseData.error || 'Registration failed');
-    }
-    return responseData as AuthResponse;
+    return readApiJson<AuthResponse>(res, 'Registration failed');
   },
   getCurrentUser: async (): Promise<AuthResponse> => {
     const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(data.error || 'Not authenticated');
-    }
-    return data as AuthResponse;
+    return readApiJson<AuthResponse>(res, 'Not authenticated');
   },
   logout: async (): Promise<void> => {
     await fetch('/api/auth/logout', {
@@ -79,6 +98,9 @@ export const api = {
   },
   getIncidents: async (): Promise<Incident[]> => {
     return requestJson('/api/incidents', () => mockPlatformApi.getIncidents());
+  },
+  getAuditEvents: async (limit = 100): Promise<AuditEvent[]> => {
+    return requestJson(`/api/audit-events?limit=${limit}`, async () => []);
   },
   getIncident: async (id: string): Promise<Incident> => {
     return requestJson(`/api/incidents/${id}`, () => mockPlatformApi.getIncident(id));
@@ -136,9 +158,21 @@ export const api = {
     try {
       const res = await fetch(`/api/operators/${id}`, { method: 'DELETE', credentials: 'same-origin' });
       if (!res.ok) {
-        throw new Error(`Request failed: ${res.status}`);
+        const contentType = res.headers.get('content-type') || '';
+        const errorData = contentType.includes('application/json') ? await res.json().catch(() => ({})) : {};
+        const message =
+          typeof errorData === 'object' && errorData && 'error' in errorData
+            ? String(errorData.error)
+            : `Request failed: ${res.status}`;
+        const error = new Error(message) as Error & { status?: number };
+        error.status = res.status;
+        throw error;
       }
     } catch (error) {
+      const status = error instanceof Error ? (error as Error & { status?: number }).status : undefined;
+      if (status === 401 || status === 403) {
+        throw error;
+      }
       console.warn(`Falling back to mock API for /api/operators/${id}`, error);
       await mockPlatformApi.deleteOperator(id);
     }

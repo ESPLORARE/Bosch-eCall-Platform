@@ -6,8 +6,36 @@ import {
   Briefcase, Calendar, ChevronRight
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
+import type { AuthUser } from '../types';
 
-export default function Profile() {
+interface ProfileProps {
+  user: AuthUser;
+  onLogout: () => Promise<void> | void;
+}
+
+function getUserInitials(name: string) {
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('') || 'U'
+  );
+}
+
+function formatLastLogin(lastLoginAt: string | null) {
+  if (!lastLoginAt) {
+    return 'Current session';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(lastLoginAt));
+}
+
+export default function Profile({ user, onLogout }: ProfileProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState<'profile' | 'password' | 'notifications' | 'theme'>('profile');
 
@@ -16,19 +44,20 @@ export default function Profile() {
     setIsSettingsOpen(true);
   };
 
-  // Mock data for the logged-in operator
+  const userInitials = getUserInitials(user.name);
+
   const operator = {
-    name: 'Jane Doe',
-    id: 'OP-001',
-    role: 'Senior Dispatcher',
-    email: 'jane.doe@bosch.com',
+    name: user.name,
+    id: user.id,
+    role: user.role,
+    email: user.email,
     phone: '+60 12 345 1111',
     assignedRegion: 'North District',
     shift: 'Morning Shift (08:00 - 16:00)',
-    status: 'Available',
+    status: user.status === 'Active' ? 'Available' : 'Suspended',
     activeIncidents: 2,
     todayHandledCases: 12,
-    lastLogin: new Date(Date.now() - 1000 * 60 * 120).toLocaleString(),
+    lastLogin: formatLastLogin(user.lastLoginAt),
     
     // Work summary
     totalCasesHandled: 1458,
@@ -58,7 +87,7 @@ export default function Profile() {
             <div className="h-24 bg-gradient-to-r from-[#005691] to-[#00A8CB] dark:from-slate-800 dark:to-slate-900 relative">
               <div className="absolute -bottom-10 left-6">
                 <div className="w-20 h-20 rounded-full bg-slate-200 dark:bg-slate-800 border-4 border-white dark:border-slate-900 flex items-center justify-center text-2xl font-bold text-slate-600 dark:text-slate-300 shadow-sm">
-                  JD
+                  {userInitials}
                 </div>
               </div>
             </div>
@@ -79,7 +108,9 @@ export default function Profile() {
               <div className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <div className="flex items-center gap-3 text-sm">
                   <Briefcase className="w-4 h-4 text-slate-400" />
-                  <span className="text-slate-600 dark:text-slate-300">ID: <span className="font-medium text-slate-900 dark:text-white">{operator.id}</span></span>
+                  <span className="text-slate-600 dark:text-slate-300">
+                    Account ID: <span className="font-medium text-slate-900 dark:text-white break-all">{operator.id}</span>
+                  </span>
                 </div>
                 <div className="flex items-center gap-3 text-sm">
                   <Mail className="w-4 h-4 text-slate-400" />
@@ -143,7 +174,9 @@ export default function Profile() {
               </button>
               <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800">
                 <button 
-                  onClick={() => window.location.reload()}
+                  onClick={() => {
+                    void onLogout();
+                  }}
                   className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors text-left group"
                 >
                   <LogOut className="w-4 h-4" /> Logout
@@ -251,6 +284,7 @@ export default function Profile() {
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)} 
         initialTab={activeSettingsTab} 
+        user={user}
       />
     </div>
   );

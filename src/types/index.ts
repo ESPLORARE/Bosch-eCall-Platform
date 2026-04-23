@@ -111,6 +111,27 @@ export interface AuthResponse {
   expiresAt?: string;
 }
 
+export interface AuthBootstrap {
+  hasUsers: boolean;
+  registrationRequiresInvite: boolean;
+  registrationEnabled: boolean;
+}
+
+export interface AuditEvent {
+  id: number;
+  timestamp: string;
+  actor: string;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface AppOutletContext {
+  user: AuthUser;
+  onLogout: () => Promise<void> | void;
+}
+
 export interface AnalyticsSummary {
   total: number;
   active: number;

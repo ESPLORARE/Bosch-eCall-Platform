@@ -91,13 +91,20 @@ const initialNotifications: AppNotification[] = [
   }
 ];
 
-const navItems = [
+const navItems: Array<{
+  to: string;
+  icon: typeof LayoutDashboard;
+  tKey: string;
+  label?: string;
+  roles?: AuthUser['role'][];
+}> = [
   { to: '/', icon: LayoutDashboard, tKey: 'nav.dashboard' },
   { to: '/alerts', icon: AlertTriangle, tKey: 'nav.alerts' },
   { to: '/map', icon: Map, tKey: 'nav.map' },
   { to: '/vehicles', icon: Car, tKey: 'nav.vehicles' },
   { to: '/digital-twin', icon: Gauge, tKey: 'nav.digitalTwin' },
   { to: '/operators', icon: Users, tKey: 'nav.operators' },
+  { to: '/admin', icon: Server, tKey: 'nav.admin', label: 'Admin Console', roles: ['Admin', 'Supervisor'] },
   { to: '/sop', icon: FileText, tKey: 'nav.sop', label: 'SOP Center' },
   { to: '/history', icon: History, tKey: 'nav.history' },
   { to: '/analytics', icon: BarChart3, tKey: 'nav.analytics' },
@@ -109,8 +116,23 @@ interface LayoutProps {
   onLogout: () => Promise<void> | void;
 }
 
+function SidebarToggleGlyph() {
+  return (
+    <span className="flex h-[17px] w-[17px] gap-[3px]" aria-hidden="true">
+      <span className="h-full w-[6px] rounded-[3px] border border-current bg-current/10" />
+      <span className="h-full flex-1 rounded-[3px] border border-current" />
+    </span>
+  );
+}
+
 export default function Layout({ user, onLogout }: LayoutProps) {
   const [isDark, setIsDark] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return window.localStorage.getItem('bosch-sidebar-collapsed') === 'true';
+  });
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -151,6 +173,10 @@ export default function Layout({ user, onLogout }: LayoutProps) {
   }, [isDark]);
 
   useEffect(() => {
+    window.localStorage.setItem('bosch-sidebar-collapsed', String(isSidebarCollapsed));
+  }, [isSidebarCollapsed]);
+
+  useEffect(() => {
     const loadAssistant = () => setShouldLoadAssistant(true);
     const browserWindow = window;
 
@@ -179,44 +205,107 @@ export default function Layout({ user, onLogout }: LayoutProps) {
       
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside className="w-64 bg-white dark:bg-slate-950 text-slate-600 dark:text-slate-300 flex flex-col border-r border-slate-200 dark:border-slate-800 z-10">
-          <div className="border-b border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-white">
-            <BoschLogo imageClassName="h-9 w-auto" />
+        <aside
+          className={cn(
+            'relative z-30 bg-white dark:bg-slate-950 text-slate-600 dark:text-slate-300 flex flex-col border-r border-slate-200 dark:border-slate-800 transition-[width] duration-200 ease-out',
+            isSidebarCollapsed ? 'w-20' : 'w-64',
+          )}
+        >
+          <div
+            className={cn(
+              'h-24 border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-white flex items-center shrink-0',
+              isSidebarCollapsed ? 'group/sidebar-logo justify-center px-2' : 'justify-between gap-4 px-6',
+            )}
+          >
+            {isSidebarCollapsed ? (
+              <div className="relative flex h-12 w-12 items-center justify-center">
+                <div className="absolute inset-0 flex items-center justify-center transition duration-150 group-hover/sidebar-logo:scale-95 group-hover/sidebar-logo:opacity-0 group-focus-within/sidebar-logo:scale-95 group-focus-within/sidebar-logo:opacity-0">
+                  <div className="h-9 w-9 overflow-hidden">
+                    <BoschLogo imageClassName="h-9 w-[161px] max-w-none" />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSidebarCollapsed(false)}
+                  className="absolute inset-0 flex items-center justify-center rounded-xl bg-slate-100 text-slate-900 opacity-0 shadow-sm transition duration-150 hover:bg-slate-200 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-[#005691]/25 group-hover/sidebar-logo:opacity-100 group-focus-within/sidebar-logo:opacity-100 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                  title="Open sidebar"
+                  aria-label="Open sidebar"
+                >
+                  <SidebarToggleGlyph />
+                </button>
+                <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-950 px-2.5 py-1.5 text-xs font-semibold text-white opacity-0 shadow-lg transition-opacity group-hover/sidebar-logo:opacity-100 dark:bg-slate-800">
+                  Open sidebar
+                </span>
+              </div>
+            ) : (
+              <>
+                <div className="min-w-0">
+                  <BoschLogo imageClassName="h-9 w-auto max-w-none" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSidebarCollapsed(true)}
+                  className="group flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[#005691]/25 dark:text-slate-500 dark:hover:bg-slate-100 dark:hover:text-slate-950"
+                  title="Close sidebar"
+                  aria-label="Close sidebar"
+                >
+                  <SidebarToggleGlyph />
+                </button>
+              </>
+            )}
           </div>
-          <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  cn(
-                    'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-medium text-sm relative mx-2',
-                    isActive 
-                      ? 'bg-slate-100 dark:bg-slate-800 text-[#005691] dark:text-blue-400' 
-                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200'
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <item.icon className={cn("w-5 h-5", isActive ? "text-[#005691] dark:text-blue-400" : "text-slate-400 dark:text-slate-500")} />
-                    {t(item.tKey)}
-                  </>
-                )}
-              </NavLink>
-            ))}
+          <nav className={cn('flex-1 space-y-1 overflow-y-auto', isSidebarCollapsed ? 'px-2 py-5' : 'px-3 py-6')}>
+            {navItems.filter((item) => !item.roles || item.roles.includes(user.role)).map((item) => {
+              const label = item.label || t(item.tKey);
+
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  title={isSidebarCollapsed ? label : undefined}
+                  className={({ isActive }) =>
+                    cn(
+                      'group flex items-center rounded-lg transition-all font-medium text-sm relative',
+                      isSidebarCollapsed ? 'mx-auto h-11 w-11 justify-center' : 'mx-2 gap-3 px-3 py-2.5',
+                      isActive 
+                        ? 'bg-slate-100 dark:bg-slate-800 text-[#005691] dark:text-blue-400' 
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200'
+                    )
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <item.icon className={cn("w-5 h-5 shrink-0", isActive ? "text-[#005691] dark:text-blue-400" : "text-slate-400 dark:text-slate-500")} />
+                      {!isSidebarCollapsed && <span className="truncate">{label}</span>}
+                      {isSidebarCollapsed && (
+                        <span className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-xs font-semibold text-white shadow-lg group-hover:block dark:bg-slate-700">
+                          {label}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </NavLink>
+              );
+            })}
           </nav>
-          <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 font-bold border border-slate-200 dark:border-slate-700 shadow-sm">
+          <div className={cn('border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50', isSidebarCollapsed ? 'p-3' : 'p-4')}>
+            <NavLink
+              to="/profile"
+              title={isSidebarCollapsed ? `${user.name} - ${user.role}` : undefined}
+              className={cn('flex items-center', isSidebarCollapsed ? 'justify-center' : 'gap-3 mb-4')}
+            >
+              <div className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 font-bold border border-slate-200 dark:border-slate-700 shadow-sm shrink-0">
                 {userInitials}
               </div>
-              <div className="flex-1 min-w-0">
+              {!isSidebarCollapsed && (
+                <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-slate-900 dark:text-white truncate">{user.name}</div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{user.role}</div>
               </div>
-            </div>
-            <div className="space-y-2.5 text-xs">
+              )}
+            </NavLink>
+            {!isSidebarCollapsed ? (
+              <div className="space-y-2.5 text-xs">
               <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
                 <span>{t('sidebar.shift')}</span>
                 <span className="text-slate-700 dark:text-slate-300 font-medium">{t('sidebar.morningShift')} (08:00-16:00)</span>
@@ -237,6 +326,15 @@ export default function Layout({ user, onLogout }: LayoutProps) {
                 </span>
               </div>
             </div>
+            ) : (
+              <div className="mt-3 flex justify-center border-t border-slate-200 pt-3 dark:border-slate-800">
+                <span
+                  className="h-2.5 w-2.5 rounded-full bg-emerald-500"
+                  title={t('sidebar.available')}
+                  aria-label={t('sidebar.available')}
+                />
+              </div>
+            )}
           </div>
         </aside>
 
@@ -465,7 +563,7 @@ export default function Layout({ user, onLogout }: LayoutProps) {
 
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto p-8">
-          <Outlet />
+          <Outlet context={{ user, onLogout }} />
           </main>
         </div>
       </div>
@@ -474,6 +572,7 @@ export default function Layout({ user, onLogout }: LayoutProps) {
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)} 
         initialTab={activeSettingsTab} 
+        user={user}
       />
       
       {shouldLoadAssistant && (

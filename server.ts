@@ -5,7 +5,7 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { generateAssistantFallback } from './src/services/assistantMock';
-import { createPlatformStore } from './src/server/platformStore';
+import { createPlatformStore, type AuthUser } from './src/server/platformStore';
 import type { Hospital, Incident, Operator, Vehicle, Weather } from './src/types';
 
 for (const envFile of ['.env.local', '.env']) {
@@ -16,6 +16,30 @@ for (const envFile of ['.env.local', '.env']) {
 
 const SESSION_COOKIE = 'bosch_session';
 const authRateLimits = new Map<string, { count: number; resetAt: number }>();
+const INCIDENT_STATUSES: Incident['status'][] = [
+  'New Alert',
+  'Acknowledged',
+  'Verifying',
+  'Dispatching',
+  'Responders En Route',
+  'Resolved',
+  'Closed',
+];
+const INCIDENT_TRANSITIONS: Record<Incident['status'], Incident['status'][]> = {
+  'New Alert': ['Acknowledged', 'Verifying', 'Dispatching'],
+  Acknowledged: ['Verifying', 'Dispatching'],
+  Verifying: ['Dispatching', 'Responders En Route', 'Resolved'],
+  Dispatching: ['Responders En Route', 'Resolved'],
+  'Responders En Route': ['Resolved'],
+  Resolved: ['Closed'],
+  Closed: [],
+};
+const INCIDENT_ROLE_TRANSITIONS: Record<AuthUser['role'], Incident['status'][]> = {
+  Admin: INCIDENT_STATUSES,
+  Supervisor: INCIDENT_STATUSES,
+  Dispatcher: ['Acknowledged', 'Verifying', 'Dispatching', 'Responders En Route', 'Resolved'],
+  'Call Taker': ['Acknowledged', 'Verifying'],
+};
 
 function parseCookies(cookieHeader = '') {
   return Object.fromEntries(
@@ -81,6 +105,38 @@ function isAuthRateLimited(req: Request) {
 
   current.count += 1;
   return current.count > 20;
+}
+
+function getAuthUser(res: Response) {
+  return res.locals.authUser as AuthUser | undefined;
+}
+
+function requireRoles(roles: AuthUser['role'][]) {
+  return (_req: Request, res: Response, next: NextFunction) => {
+    const user = getAuthUser(res);
+    if (!user || !roles.includes(user.role)) {
+      res.status(403).json({ error: 'You do not have permission to perform this action' });
+      return;
+    }
+    next();
+  };
+}
+
+function isIncidentStatus(value: unknown): value is Incident['status'] {
+  return typeof value === 'string' && INCIDENT_STATUSES.includes(value as Incident['status']);
+}
+
+function getAllowedIncidentStatuses(user: AuthUser, currentStatus: Incident['status']) {
+  const transitionTargets = INCIDENT_TRANSITIONS[currentStatus] || [];
+  const roleTargets = INCIDENT_ROLE_TRANSITIONS[user.role] || [];
+  return transitionTargets.filter((status) => roleTargets.includes(status));
+}
+
+function canUpdateIncidentStatus(user: AuthUser, currentStatus: Incident['status'], nextStatus: Incident['status']) {
+  if (currentStatus === nextStatus) {
+    return true;
+  }
+  return getAllowedIncidentStatuses(user, currentStatus).includes(nextStatus);
 }
 
 // --- Mock Data ---
@@ -449,6 +505,15 @@ async function startServer() {
     res.json(store.health());
   });
 
+  app.get('/api/auth/bootstrap', (req, res) => {
+    const hasUsers = store.hasUsers();
+    res.json({
+      hasUsers,
+      registrationRequiresInvite: hasUsers,
+      registrationEnabled: !hasUsers || Boolean(process.env.REGISTRATION_CODE),
+    });
+  });
+
   app.post('/api/auth/register', (req, res) => {
     if (isAuthRateLimited(req)) {
       res.status(429).json({ error: 'Too many authentication attempts. Please try again later.' });
@@ -577,7 +642,7 @@ async function startServer() {
     next();
   });
 
-  app.get('/api/audit-events', (req, res) => {
+  app.get('/api/audit-events', requireRoles(['Admin', 'Supervisor']), (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     res.json(store.listAuditEvents(limit));
   });
@@ -595,14 +660,41 @@ async function startServer() {
     }
   });
 
-  app.post('/api/incidents', (req, res) => {
-    const newIncident = store.createIncident(req.body);
+  app.post('/api/incidents', requireRoles(['Admin', 'Supervisor', 'Dispatcher', 'Call Taker']), (req, res) => {
+    const user = getAuthUser(res);
+    const newIncident = store.createIncident(req.body, user?.name || 'System');
     res.status(201).json(newIncident);
   });
 
   app.put('/api/incidents/:id/status', (req, res) => {
-    const { status, operator, note } = req.body;
-    const incident = store.updateIncidentStatus(req.params.id, status, operator, note);
+    const user = getAuthUser(res);
+    const incidentBeforeUpdate = store.getIncident(req.params.id);
+    const { status, note } = req.body;
+
+    if (!user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    if (!incidentBeforeUpdate) {
+      res.status(404).json({ error: 'Incident not found' });
+      return;
+    }
+
+    if (!isIncidentStatus(status)) {
+      res.status(400).json({ error: 'Invalid incident status' });
+      return;
+    }
+
+    if (!canUpdateIncidentStatus(user, incidentBeforeUpdate.status, status)) {
+      res.status(403).json({
+        error: `Role ${user.role} cannot move incident from ${incidentBeforeUpdate.status} to ${status}`,
+        allowedStatuses: getAllowedIncidentStatuses(user, incidentBeforeUpdate.status),
+      });
+      return;
+    }
+
+    const incident = store.updateIncidentStatus(req.params.id, status, user.name, note);
 
     if (incident) {
       res.json(incident);
@@ -632,13 +724,15 @@ async function startServer() {
     res.json(store.listOperators());
   });
 
-  app.post('/api/operators', (req, res) => {
-    const newOperator = store.createOperator(req.body);
+  app.post('/api/operators', requireRoles(['Admin']), (req, res) => {
+    const user = getAuthUser(res);
+    const newOperator = store.createOperator(req.body, user?.name || 'System');
     res.status(201).json(newOperator);
   });
 
-  app.put('/api/operators/:id', (req, res) => {
-    const operator = store.updateOperator(req.params.id, req.body);
+  app.put('/api/operators/:id', requireRoles(['Admin', 'Supervisor']), (req, res) => {
+    const user = getAuthUser(res);
+    const operator = store.updateOperator(req.params.id, req.body, user?.name || 'System');
     if (operator) {
       res.json(operator);
     } else {
@@ -646,8 +740,9 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/operators/:id', (req, res) => {
-    const deleted = store.deleteOperator(req.params.id);
+  app.delete('/api/operators/:id', requireRoles(['Admin']), (req, res) => {
+    const user = getAuthUser(res);
+    const deleted = store.deleteOperator(req.params.id, user?.name || 'System');
     if (deleted) {
       res.status(204).send();
     } else {
