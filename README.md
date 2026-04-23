@@ -50,3 +50,24 @@ The Pages workflow builds the static frontend with:
 
 The deployed URL is:
 `https://ESPLORARE.github.io/Bosch-eCall-Platform/`
+
+GitHub Pages is static hosting. It cannot run the Express backend or SQLite database.
+Use Render for the real full-stack app.
+
+## Render Full-Stack Deployment
+
+This repo includes `render.yaml` for Render Blueprint deployment.
+
+1. Push the latest code to GitHub.
+2. In Render, create a new Blueprint from this repository.
+3. Set `REGISTRATION_CODE` when Render asks for secret env vars.
+4. Open the Render URL, for example `https://bosch-ecall-platform.onrender.com`.
+
+Render runs:
+
+- Build: `npm ci && npm run build`
+- Start: `npm start`
+- Health check: `/api/health`
+- SQLite path: `/var/data/bosch-ecall-platform.sqlite`
+
+See `DEPLOY_RENDER.md` for the detailed deployment checklist.

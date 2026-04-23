@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: bosch-ecall-platform
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: bosch-ecall-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 22.22.0
+      - key: VITE_BASE_PATH
+        value: /
+      - key: DATABASE_PATH
+        value: /var/data/bosch-ecall-platform.sqlite
+      - key: COOKIE_SECURE
+        value: true
+      - key: REGISTRATION_CODE
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
