@@ -339,6 +339,62 @@ export class PlatformStore {
     );
   }
 
+  listAuthUsers() {
+    const rows = this.db
+      .prepare(
+        `SELECT user_id, email, name, role, status, created_at, last_login_at
+         FROM auth_users ORDER BY datetime(created_at) DESC`,
+      )
+      .all() as Array<Parameters<typeof toAuthUser>[0]>;
+    return rows.map((row) => toAuthUser(row));
+  }
+
+  updateAuthUser(
+    userId: string,
+    data: Partial<Pick<AuthUser, 'name' | 'role' | 'status'>>,
+    actor = 'System',
+  ) {
+    const existing = this.getUserById(userId);
+    if (!existing) return null;
+
+    const nextUser = {
+      name: typeof data.name === 'string' && data.name.trim() ? data.name.trim() : existing.name,
+      role: data.role || existing.role,
+      status: data.status || existing.status,
+    };
+
+    this.db
+      .prepare('UPDATE auth_users SET name = ?, role = ?, status = ?, updated_at = ? WHERE user_id = ?')
+      .run(nextUser.name, nextUser.role, nextUser.status, nowIso(), userId);
+
+    if (nextUser.status !== 'Active') {
+      this.db.prepare('DELETE FROM auth_sessions WHERE user_id = ?').run(userId);
+    }
+
+    this.createAuditEvent(actor, 'auth.user_updated', 'auth_user', userId, {
+      fields: Object.keys(data),
+      previousRole: existing.role,
+      role: nextUser.role,
+      previousStatus: existing.status,
+      status: nextUser.status,
+    });
+
+    return this.getUserById(userId);
+  }
+
+  getRegistrationInviteCode() {
+    return this.getSetting<string>('registration_invite_code');
+  }
+
+  setRegistrationInviteCode(code: string, actor = 'System') {
+    const normalizedCode = code.trim();
+    this.setSetting('registration_invite_code', normalizedCode);
+    this.createAuditEvent(actor, 'auth.registration_code_updated', 'auth_setting', 'registration_invite_code', {
+      configured: Boolean(normalizedCode),
+    });
+    return normalizedCode;
+  }
+
   hasUsers() {
     const row = this.db.prepare('SELECT COUNT(*) AS count FROM auth_users').get() as { count: number };
     return row.count > 0;

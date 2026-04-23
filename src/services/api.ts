@@ -1,4 +1,16 @@
-import { Incident, Vehicle, AnalyticsData, Hospital, Weather, Operator, AuthBootstrap, AuthResponse, AuditEvent } from '../types';
+import {
+  Incident,
+  Vehicle,
+  AnalyticsData,
+  Hospital,
+  Weather,
+  Operator,
+  AuthBootstrap,
+  AuthResponse,
+  AuditEvent,
+  AuthUser,
+  RegistrationCodeStatus,
+} from '../types';
 import { mockPlatformApi } from '../data/mockPlatformData';
 import { generateAssistantFallback } from './assistantMock';
 
@@ -101,6 +113,33 @@ export const api = {
   },
   getAuditEvents: async (limit = 100): Promise<AuditEvent[]> => {
     return requestJson(`/api/audit-events?limit=${limit}`, async () => []);
+  },
+  getAdminUsers: async (): Promise<AuthUser[]> => {
+    return requestJson('/api/admin/users', async () => []);
+  },
+  updateAdminUser: async (
+    id: string,
+    data: Partial<Pick<AuthUser, 'name' | 'role' | 'status'>>,
+  ): Promise<AuthUser> => {
+    return requestJson(`/api/admin/users/${id}`, async () => {
+      throw new Error('User management is unavailable in mock mode');
+    }, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  },
+  getRegistrationCode: async (): Promise<RegistrationCodeStatus> => {
+    return requestJson('/api/admin/registration-code', async () => ({ code: '', isConfigured: false, source: 'none' }));
+  },
+  updateRegistrationCode: async (code: string): Promise<RegistrationCodeStatus> => {
+    return requestJson('/api/admin/registration-code', async () => {
+      throw new Error('Registration code management is unavailable in mock mode');
+    }, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
   },
   getIncident: async (id: string): Promise<Incident> => {
     return requestJson(`/api/incidents/${id}`, () => mockPlatformApi.getIncident(id));

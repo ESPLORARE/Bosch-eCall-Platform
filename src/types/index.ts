@@ -117,6 +117,12 @@ export interface AuthBootstrap {
   registrationEnabled: boolean;
 }
 
+export interface RegistrationCodeStatus {
+  code: string;
+  isConfigured: boolean;
+  source: 'database' | 'environment' | 'none';
+}
+
 export interface AuditEvent {
   id: number;
   timestamp: string;
@@ -130,6 +136,16 @@ export interface AuditEvent {
 export interface AppOutletContext {
   user: AuthUser;
   onLogout: () => Promise<void> | void;
+}
+
+export interface RealtimeEvent {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  createdAt: string;
+  entityId?: string;
+  payload?: Record<string, unknown>;
 }
 
 export interface AnalyticsSummary {

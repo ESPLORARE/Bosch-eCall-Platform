@@ -5,7 +5,7 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { generateAssistantFallback } from './src/services/assistantMock';
-import { createPlatformStore, type AuthUser } from './src/server/platformStore';
+import { createPlatformStore, type AuthUser, type PlatformStore } from './src/server/platformStore';
 import type { Hospital, Incident, Operator, Vehicle, Weather } from './src/types';
 
 for (const envFile of ['.env.local', '.env']) {
@@ -39,6 +39,17 @@ const INCIDENT_ROLE_TRANSITIONS: Record<AuthUser['role'], Incident['status'][]> 
   Supervisor: INCIDENT_STATUSES,
   Dispatcher: ['Acknowledged', 'Verifying', 'Dispatching', 'Responders En Route', 'Resolved'],
   'Call Taker': ['Acknowledged', 'Verifying'],
+};
+const AUTH_ROLES: AuthUser['role'][] = ['Admin', 'Supervisor', 'Dispatcher', 'Call Taker'];
+const AUTH_STATUSES: AuthUser['status'][] = ['Active', 'Suspended'];
+const realtimeClients = new Set<Response>();
+
+type RealtimePayload = {
+  type: string;
+  title: string;
+  description: string;
+  entityId?: string;
+  payload?: Record<string, unknown>;
 };
 
 function parseCookies(cookieHeader = '') {
@@ -81,6 +92,17 @@ function clearSessionCookie(res: Response) {
 
 function sanitizeAuthUser(user: unknown) {
   return user;
+}
+
+function getRegistrationInviteCodeStatus(store: PlatformStore) {
+  const databaseCode = store.getRegistrationInviteCode();
+  const environmentCode = process.env.REGISTRATION_CODE;
+  const code = databaseCode || environmentCode || '';
+  return {
+    code,
+    isConfigured: Boolean(code),
+    source: databaseCode ? 'database' : environmentCode ? 'environment' : 'none',
+  } as const;
 }
 
 function isStrongEnoughPassword(password: string) {
@@ -137,6 +159,27 @@ function canUpdateIncidentStatus(user: AuthUser, currentStatus: Incident['status
     return true;
   }
   return getAllowedIncidentStatuses(user, currentStatus).includes(nextStatus);
+}
+
+function isAuthRole(value: unknown): value is AuthUser['role'] {
+  return typeof value === 'string' && AUTH_ROLES.includes(value as AuthUser['role']);
+}
+
+function isAuthStatus(value: unknown): value is AuthUser['status'] {
+  return typeof value === 'string' && AUTH_STATUSES.includes(value as AuthUser['status']);
+}
+
+function publishRealtimeEvent(event: RealtimePayload) {
+  const payload = {
+    id: `EVT-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    createdAt: new Date().toISOString(),
+    ...event,
+  };
+  const frame = `event: platform\nid: ${payload.id}\ndata: ${JSON.stringify(payload)}\n\n`;
+
+  for (const client of realtimeClients) {
+    client.write(frame);
+  }
 }
 
 // --- Mock Data ---
@@ -507,10 +550,11 @@ async function startServer() {
 
   app.get('/api/auth/bootstrap', (req, res) => {
     const hasUsers = store.hasUsers();
+    const registrationCode = getRegistrationInviteCodeStatus(store);
     res.json({
       hasUsers,
       registrationRequiresInvite: hasUsers,
-      registrationEnabled: !hasUsers || Boolean(process.env.REGISTRATION_CODE),
+      registrationEnabled: !hasUsers || registrationCode.isConfigured,
     });
   });
 
@@ -544,7 +588,7 @@ async function startServer() {
     }
 
     if (!isFirstUser) {
-      const expectedCode = process.env.REGISTRATION_CODE;
+      const expectedCode = getRegistrationInviteCodeStatus(store).code;
       if (!expectedCode || registrationCode !== expectedCode) {
         res.status(403).json({ error: 'Registration requires an organization invite code' });
         return;
@@ -575,6 +619,13 @@ async function startServer() {
     }
 
     setSessionCookie(res, login.session.token, login.session.expiresAt);
+    publishRealtimeEvent({
+      type: 'auth.user_registered',
+      title: 'New user registered',
+      description: `${user.name} joined as ${user.role}`,
+      entityId: user.id,
+      payload: { role: user.role },
+    });
     res.status(201).json({ user: sanitizeAuthUser(login.session.user), expiresAt: login.session.expiresAt });
   });
 
@@ -642,9 +693,103 @@ async function startServer() {
     next();
   });
 
+  app.get('/api/realtime', (req, res) => {
+    const user = getAuthUser(res);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    realtimeClients.add(res);
+    res.write(
+      `event: platform\ndata: ${JSON.stringify({
+        id: `EVT-${Date.now()}`,
+        type: 'connection.ready',
+        title: 'Live stream connected',
+        description: `Realtime updates enabled for ${user?.name || 'operator'}`,
+        createdAt: new Date().toISOString(),
+      })}\n\n`,
+    );
+
+    const heartbeat = setInterval(() => {
+      res.write(`: heartbeat ${Date.now()}\n\n`);
+    }, 25_000);
+
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      realtimeClients.delete(res);
+      res.end();
+    });
+  });
+
   app.get('/api/audit-events', requireRoles(['Admin', 'Supervisor']), (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     res.json(store.listAuditEvents(limit));
+  });
+
+  app.get('/api/admin/users', requireRoles(['Admin', 'Supervisor']), (req, res) => {
+    res.json(store.listAuthUsers());
+  });
+
+  app.patch('/api/admin/users/:id', requireRoles(['Admin']), (req, res) => {
+    const user = getAuthUser(res);
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined;
+    const role = req.body?.role;
+    const status = req.body?.status;
+
+    if (role !== undefined && !isAuthRole(role)) {
+      res.status(400).json({ error: 'Invalid role' });
+      return;
+    }
+
+    if (status !== undefined && !isAuthStatus(status)) {
+      res.status(400).json({ error: 'Invalid user status' });
+      return;
+    }
+
+    if (req.params.id === user?.id && status === 'Suspended') {
+      res.status(400).json({ error: 'You cannot suspend your own active session' });
+      return;
+    }
+
+    const updatedUser = store.updateAuthUser(req.params.id, { name, role, status }, user?.name || 'System');
+    if (!updatedUser) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    publishRealtimeEvent({
+      type: 'auth.user_updated',
+      title: 'User access updated',
+      description: `${updatedUser.name} is now ${updatedUser.role} / ${updatedUser.status}`,
+      entityId: updatedUser.id,
+      payload: { role: updatedUser.role, status: updatedUser.status },
+    });
+    res.json(updatedUser);
+  });
+
+  app.get('/api/admin/registration-code', requireRoles(['Admin']), (req, res) => {
+    res.json(getRegistrationInviteCodeStatus(store));
+  });
+
+  app.put('/api/admin/registration-code', requireRoles(['Admin']), (req, res) => {
+    const user = getAuthUser(res);
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    if (code && code.length < 6) {
+      res.status(400).json({ error: 'Invite code must be at least 6 characters' });
+      return;
+    }
+
+    store.setRegistrationInviteCode(code, user?.name || 'System');
+    const status = getRegistrationInviteCodeStatus(store);
+    publishRealtimeEvent({
+      type: 'auth.registration_code_updated',
+      title: 'Registration invite code updated',
+      description: status.isConfigured ? 'New operator registrations are invite-protected' : 'Registration invite code was cleared',
+      entityId: 'registration_invite_code',
+      payload: { configured: status.isConfigured },
+    });
+    res.json(status);
   });
 
   app.get('/api/incidents', (req, res) => {
@@ -663,6 +808,13 @@ async function startServer() {
   app.post('/api/incidents', requireRoles(['Admin', 'Supervisor', 'Dispatcher', 'Call Taker']), (req, res) => {
     const user = getAuthUser(res);
     const newIncident = store.createIncident(req.body, user?.name || 'System');
+    publishRealtimeEvent({
+      type: 'incident.created',
+      title: 'New incident created',
+      description: `${newIncident.incidentId} opened for ${newIncident.plateNumber}`,
+      entityId: newIncident.incidentId,
+      payload: { status: newIncident.status, severity: newIncident.severity },
+    });
     res.status(201).json(newIncident);
   });
 
@@ -686,6 +838,15 @@ async function startServer() {
       return;
     }
 
+    if (
+      incidentBeforeUpdate.status !== status &&
+      ['Resolved', 'Closed'].includes(status) &&
+      (typeof note !== 'string' || !note.trim())
+    ) {
+      res.status(400).json({ error: `A closure note is required before marking an incident as ${status}` });
+      return;
+    }
+
     if (!canUpdateIncidentStatus(user, incidentBeforeUpdate.status, status)) {
       res.status(403).json({
         error: `Role ${user.role} cannot move incident from ${incidentBeforeUpdate.status} to ${status}`,
@@ -697,6 +858,16 @@ async function startServer() {
     const incident = store.updateIncidentStatus(req.params.id, status, user.name, note);
 
     if (incident) {
+      publishRealtimeEvent({
+        type: incidentBeforeUpdate.status === status ? 'incident.note_added' : 'incident.status_updated',
+        title: incidentBeforeUpdate.status === status ? 'Incident note added' : 'Incident status updated',
+        description:
+          incidentBeforeUpdate.status === status
+            ? `${incident.incidentId}: note added by ${user.name}`
+            : `${incident.incidentId}: ${incidentBeforeUpdate.status} -> ${incident.status}`,
+        entityId: incident.incidentId,
+        payload: { previousStatus: incidentBeforeUpdate.status, status: incident.status },
+      });
       res.json(incident);
     } else {
       res.status(404).json({ error: 'Incident not found' });
@@ -727,6 +898,13 @@ async function startServer() {
   app.post('/api/operators', requireRoles(['Admin']), (req, res) => {
     const user = getAuthUser(res);
     const newOperator = store.createOperator(req.body, user?.name || 'System');
+    publishRealtimeEvent({
+      type: 'operator.created',
+      title: 'Operator created',
+      description: `${newOperator.name} was added as ${newOperator.role}`,
+      entityId: newOperator.id,
+      payload: { role: newOperator.role, status: newOperator.status },
+    });
     res.status(201).json(newOperator);
   });
 
@@ -734,6 +912,13 @@ async function startServer() {
     const user = getAuthUser(res);
     const operator = store.updateOperator(req.params.id, req.body, user?.name || 'System');
     if (operator) {
+      publishRealtimeEvent({
+        type: 'operator.updated',
+        title: 'Operator updated',
+        description: `${operator.name} profile was updated`,
+        entityId: operator.id,
+        payload: { role: operator.role, status: operator.status },
+      });
       res.json(operator);
     } else {
       res.status(404).json({ error: 'Operator not found' });
@@ -744,6 +929,12 @@ async function startServer() {
     const user = getAuthUser(res);
     const deleted = store.deleteOperator(req.params.id, user?.name || 'System');
     if (deleted) {
+      publishRealtimeEvent({
+        type: 'operator.deleted',
+        title: 'Operator deactivated',
+        description: `${req.params.id} was removed from the operator roster`,
+        entityId: req.params.id,
+      });
       res.status(204).send();
     } else {
       res.status(404).json({ error: 'Operator not found' });
@@ -833,7 +1024,15 @@ async function startServer() {
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr:
+          process.env.DISABLE_HMR === 'true'
+            ? false
+            : {
+                port: Number(process.env.VITE_HMR_PORT) || PORT + 20_000,
+              },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

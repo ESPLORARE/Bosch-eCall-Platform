@@ -25,7 +25,7 @@ import { twMerge } from 'tailwind-merge';
 import { useLanguage, Language } from '../contexts/LanguageContext';
 import BoschLogo from './BoschLogo';
 import SettingsModal from './SettingsModal';
-import type { AuthUser } from '../types';
+import type { AuthUser, RealtimeEvent } from '../types';
 
 const AegisAssistant = lazy(() => import('./AegisAssistant'));
 
@@ -191,6 +191,43 @@ export default function Layout({ user, onLogout }: LayoutProps) {
 
     const timeoutId = globalThis.setTimeout(loadAssistant, 1200);
     return () => globalThis.clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
+    const stream = new EventSource('/api/realtime', { withCredentials: true });
+
+    const handlePlatformEvent = (event: MessageEvent<string>) => {
+      const realtimeEvent = JSON.parse(event.data) as RealtimeEvent;
+      if (realtimeEvent.type === 'connection.ready') {
+        return;
+      }
+
+      const notificationType: NotificationType =
+        realtimeEvent.type.includes('incident') ? 'critical' : realtimeEvent.type.includes('operator') ? 'info' : 'system';
+
+      setNotifications((current) => [
+        {
+          id: realtimeEvent.id,
+          title: realtimeEvent.title,
+          description: realtimeEvent.description,
+          time: 'Live',
+          type: notificationType,
+          read: false,
+          incidentId: realtimeEvent.type.includes('incident') ? realtimeEvent.entityId : undefined,
+        },
+        ...current.slice(0, 24),
+      ]);
+    };
+
+    stream.addEventListener('platform', handlePlatformEvent as EventListener);
+    stream.onerror = () => {
+      stream.close();
+    };
+
+    return () => {
+      stream.removeEventListener('platform', handlePlatformEvent as EventListener);
+      stream.close();
+    };
   }, []);
 
   return (

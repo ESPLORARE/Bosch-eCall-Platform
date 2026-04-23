@@ -119,6 +119,11 @@ export default function IncidentDetail() {
 
   const handleStatusUpdate = async (newStatus: Incident['status']) => {
     if (!incident) return;
+    if (incident.status !== newStatus && ['Resolved', 'Closed'].includes(newStatus) && !note.trim()) {
+      setUpdateError(`Please add a closure note before marking this incident as ${newStatus}.`);
+      return;
+    }
+
     setUpdating(true);
     setUpdateError('');
     try {
@@ -396,9 +401,15 @@ export default function IncidentDetail() {
                 return (
                   <button
                     key={status}
-                    onClick={() => handleStatusUpdate(status)}
-                    disabled={updating || isCurrent || !isAllowed}
-                    title={!isCurrent && !isAllowed ? `Your role cannot move this incident to ${status} from ${incident.status}` : undefined}
+                  onClick={() => handleStatusUpdate(status)}
+                  disabled={updating || isCurrent || !isAllowed}
+                    title={
+                      !isCurrent && !isAllowed
+                        ? `Your role cannot move this incident to ${status} from ${incident.status}`
+                        : ['Resolved', 'Closed'].includes(status)
+                          ? 'Closure note required'
+                          : undefined
+                    }
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
                       ${isCurrent
                         ? 'bg-slate-800 text-white dark:bg-slate-700 cursor-default'
